@@ -80,6 +80,7 @@ typedef enum UpperRelationKind
 	/* NB: UPPERREL_FINAL must be last enum entry; it's used to size arrays */
 } UpperRelationKind;
 
+// 记录计划的完整信息
 /*----------
  * PlannerGlobal
  *		Global information for planning/optimization

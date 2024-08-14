@@ -328,6 +328,7 @@ PageAddItemExtended(Page page,
 		memmove(itemId + 1, itemId,
 				(limit - offsetNumber) * sizeof(ItemIdData));
 
+    // 设置item id指针
 	/* set the line pointer */
 	ItemIdSetNormal(itemId, upper, size);
 
@@ -345,6 +346,7 @@ PageAddItemExtended(Page page,
 	 */
 	VALGRIND_CHECK_MEM_IS_DEFINED(item, size);
 
+    // 将tuple 拷贝到item id指向的空间
 	/* copy the item's data onto the page */
 	memcpy((char *) page + upper, item, size);
 
@@ -352,6 +354,7 @@ PageAddItemExtended(Page page,
 	phdr->pd_lower = (LocationIndex) lower;
 	phdr->pd_upper = (LocationIndex) upper;
 
+    // 这里返回tuple所在page的offset
 	return offsetNumber;
 }
 
@@ -737,6 +740,7 @@ PageRepairFragmentation(Page page)
 	itemidptr = itemidbase;
 	nunused = totallen = 0;
 	last_offset = pd_special;
+    // FirstOffsetNumber = 1
 	for (i = FirstOffsetNumber; i <= nline; i++)
 	{
 		lp = PageGetItemId(page, i);
@@ -1521,6 +1525,8 @@ PageSetChecksumCopy(Page page, BlockNumber blkno)
 	 * array, is first to ensure adequate alignment for the checksumming code
 	 * and second to avoid wasting space in processes that never call this.
 	 */
+    // 这里不存在并发情况,这里调用时机是在flush buffer的时候
+    // PG实现限制了多个process针对同一个buf进行flush,只有一个process会针对进行IO,其他会wait和wake up
 	if (pageCopy == NULL)
 		pageCopy = MemoryContextAllocAligned(TopMemoryContext,
 											 BLCKSZ,

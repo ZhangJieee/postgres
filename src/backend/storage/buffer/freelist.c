@@ -32,13 +32,15 @@ typedef struct
 	/* Spinlock: protects the values below */
 	slock_t		buffer_strategy_lock;
 
+    // Clock sweep算法中,指向下一个buffer
 	/*
 	 * Clock sweep hand: index of next buffer to consider grabbing. Note that
 	 * this isn't a concrete buffer - we only ever increase the value. So, to
-	 * get an actual buffer, it needs to be used modulo NBuffers.
+	 * get an actual buffer, it needs to be used modulo(%) NBuffers.
 	 */
 	pg_atomic_uint32 nextVictimBuffer;
 
+    // freelist的首尾索引
 	int			firstFreeBuffer;	/* Head of list of unused buffers */
 	int			lastFreeBuffer; /* Tail of list of unused buffers */
 
@@ -109,6 +111,7 @@ ClockSweepTick(void)
 {
 	uint32		victim;
 
+    // 原子性的向后移动,多个进程同时更新,这里可能会导致不按顺序的返回
 	/*
 	 * Atomically move hand ahead one buffer - if there's several processes
 	 * doing this, this can lead to buffers being returned slightly out of
@@ -152,6 +155,7 @@ ClockSweepTick(void)
 
 				wrapped = expected % NBuffers;
 
+                // 这里内部会更新expected = nextVictimBuffer,并在更新之前根据expected == nextVictimBuffer的结果,为true则执行nextVictimBuffer = wrapped
 				success = pg_atomic_compare_exchange_u32(&StrategyControl->nextVictimBuffer,
 														 &expected, wrapped);
 				if (success)
@@ -192,6 +196,7 @@ have_free_buffer(void)
  *	To ensure that no one else can pin the buffer before we do, we must
  *	return the buffer with the buffer header spinlock still held.
  */
+// 基于淘汰策略获取buf同时持有spin lock,避免并发场景被复用
 BufferDesc *
 StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_ring)
 {
@@ -216,6 +221,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 		}
 	}
 
+    // 未能从buffer ring中获取到victim buffer,这里从freelist中分配
 	/*
 	 * If asked, we need to waken the bgwriter. Since we don't want to rely on
 	 * a spinlock for this we force a read from shared memory once, and then
@@ -242,6 +248,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 		SetLatch(&ProcGlobal->allProcs[bgwprocno].procLatch);
 	}
 
+    // 统计buffer的alloc次数,用于bgwriter来预估buffer的消费速率
 	/*
 	 * We count buffer allocation requests so that the bgwriter can estimate
 	 * the rate of buffer consumption.  Note that buffers recycled by a
@@ -261,6 +268,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 	 * buffer of the freelist. Then check whether that buffer is usable and
 	 * repeat if not.
 	 *
+	 * buf->freeNext通过StrategyControl中的buffer_strategy_lock来进行保护,则不需要持有buf内部的spinlock
 	 * Note that the freeNext fields are considered to be protected by the
 	 * buffer_strategy_lock not the individual buffer spinlocks, so it's OK to
 	 * manipulate them without holding the spinlock.
@@ -272,6 +280,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 			/* Acquire the spinlock to remove element from the freelist */
 			SpinLockAcquire(&StrategyControl->buffer_strategy_lock);
 
+            // 这里意味着没有空闲的buf了
 			if (StrategyControl->firstFreeBuffer < 0)
 			{
 				SpinLockRelease(&StrategyControl->buffer_strategy_lock);
@@ -281,6 +290,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 			buf = GetBufferDescriptor(StrategyControl->firstFreeBuffer);
 			Assert(buf->freeNext != FREENEXT_NOT_IN_LIST);
 
+            // 所有的free buf通过next指针连接,这里直接通过freeNext指向下一个free buf
 			/* Unconditionally remove buffer from freelist */
 			StrategyControl->firstFreeBuffer = buf->freeNext;
 			buf->freeNext = FREENEXT_NOT_IN_LIST;
@@ -299,6 +309,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 			 * of 8.3, but we'd better check anyway.)
 			 */
 			local_buf_state = LockBufHdr(buf);
+            // 没有被pin同时最近没有被使用过
 			if (BUF_STATE_GET_REFCOUNT(local_buf_state) == 0
 				&& BUF_STATE_GET_USAGECOUNT(local_buf_state) == 0)
 			{
@@ -311,6 +322,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 		}
 	}
 
+    // freelist中没有合适的buf,通过clock sweep进行全局扫描
 	/* Nothing on the freelist, so run the "clock sweep" algorithm */
 	trycounter = NBuffers;
 	for (;;)
@@ -342,6 +354,8 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 		}
 		else if (--trycounter == 0)
 		{
+            // 我们已经scan了所有的buf,并且所有的都处于pin的状态,我们希望有人可以释放一个出来,
+            // 但是更好的方式是fail而不是陷于一个无限循环的风险
 			/*
 			 * We've scanned all the buffers without making any state changes,
 			 * so all the buffers are pinned (or were when we looked at them).
@@ -485,6 +499,7 @@ StrategyInitialize(bool init)
 	 * happening in each partition concurrently, so we could need as many as
 	 * NBuffers + NUM_BUFFER_PARTITIONS entries.
 	 */
+    // 初始化用于查询缓冲池的HT
 	InitBufTable(NBuffers + NUM_BUFFER_PARTITIONS);
 
 	/*
@@ -508,6 +523,7 @@ StrategyInitialize(bool init)
 		 * Grab the whole linked list of free buffers for our strategy. We
 		 * assume it was previously set up by InitBufferPool().
 		 */
+        // 初始化free buffer idx
 		StrategyControl->firstFreeBuffer = 0;
 		StrategyControl->lastFreeBuffer = NBuffers - 1;
 
@@ -681,6 +697,7 @@ GetBufferFromRing(BufferAccessStrategy strategy, uint32 *buf_state)
 	 */
 	buf = GetBufferDescriptor(bufnum - 1);
 	local_buf_state = LockBufHdr(buf);
+    // 基本策略是 refcount确认未被使用,usagecount表示最近的使用次数,如果是1次则很可能是当前进程刚使用过这里会直接返回
 	if (BUF_STATE_GET_REFCOUNT(local_buf_state) == 0
 		&& BUF_STATE_GET_USAGECOUNT(local_buf_state) <= 1)
 	{
@@ -764,6 +781,7 @@ StrategyRejectBuffer(BufferAccessStrategy strategy, BufferDesc *buf, bool from_r
 		strategy->buffers[strategy->current] != BufferDescriptorGetBuffer(buf))
 		return false;
 
+    // 在环中,并且当前current指向的是目标buf,这里意味着需要重新选择victim buffer
 	/*
 	 * Remove the dirty buffer from the ring; necessary to prevent infinite
 	 * loop if all ring members are dirty.

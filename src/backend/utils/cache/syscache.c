@@ -682,6 +682,7 @@ static const struct cachedesc cacheinfo[] = {
 StaticAssertDecl(lengthof(cacheinfo) == SysCacheSize,
 				 "SysCacheSize does not match syscache.c's array");
 
+// 每个PG进程会维护自己的SysCache,大小为系统表的总个数
 static CatCache *SysCache[SysCacheSize];
 
 static bool CacheInitialized = false;

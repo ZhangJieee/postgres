@@ -1188,6 +1188,7 @@ exec_simple_query(const char *query_string)
 		querytree_list = pg_analyze_and_rewrite_fixedparams(parsetree, query_string,
 															NULL, 0, NULL);
 
+        // 生成一个查询树
 		plantree_list = pg_plan_queries(querytree_list, query_string,
 										CURSOR_OPT_PARALLEL_OK, NULL);
 
@@ -1207,6 +1208,7 @@ exec_simple_query(const char *query_string)
 		/* If we got a cancel signal in analysis or planning, quit */
 		CHECK_FOR_INTERRUPTS();
 
+        // 初始化portal
 		/*
 		 * Create unnamed portal to run the query or queries in. If there
 		 * already is one, silently drop it.
@@ -4138,6 +4140,7 @@ PostgresMain(const char *dbname, const char *username)
 
 	SetProcessingMode(InitProcessing);
 
+    // 配置信号回调
 	/*
 	 * Set up signal handlers.  (InitPostmasterChild or InitStandaloneProcess
 	 * has already set up BlockSig and made that the active signal mask.)
@@ -4466,6 +4469,7 @@ PostgresMain(const char *dbname, const char *username)
 		 */
 		InvalidateCatalogSnapshotConditionally();
 
+        // 通知前端,后台已经处于idle状态,可以处理查询了
 		/*
 		 * (1) If we've reached idle state, tell the frontend we're ready for
 		 * a new query.
@@ -4578,6 +4582,7 @@ PostgresMain(const char *dbname, const char *username)
 		 */
 		DoingCommandRead = true;
 
+        // 读Socket
 		/*
 		 * (3) read a command (loop blocks here)
 		 */

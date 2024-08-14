@@ -36,6 +36,7 @@ static inline void validate_relation_kind(Relation r);
  *		storage.)
  * ----------------
  */
+// 打开目标表文件
 Relation
 table_open(Oid relationId, LOCKMODE lockmode)
 {

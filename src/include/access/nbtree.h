@@ -59,6 +59,7 @@ typedef uint16 BTCycleId;
  *	64-bit/full safexid values using BTDeletedPageData instead.
  */
 
+// 结构体位于BT每个page的末尾,用来连接相邻节点
 typedef struct BTPageOpaqueData
 {
 	BlockNumber btpo_prev;		/* left sibling, or P_NONE if leftmost */

@@ -243,6 +243,7 @@ spin_delay(void)
 	 * Adding a PAUSE in the spin delay loop is demonstrably a no-op on
 	 * Opteron, but it may be of some use on EM64T, so we keep it.
 	 */
+    // 执行一次nop操作
 	__asm__ __volatile__(
 		" rep; nop			\n");
 }

@@ -57,6 +57,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 		ttc->ttc_attr[i].tai_oldexternal = NULL;
 		ttc->ttc_attr[i].tai_compression = att->attcompression;
 
+        // 更新场景
 		if (ttc->ttc_oldvalues != NULL)
 		{
 			/*
@@ -74,6 +75,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			if (att->attlen == -1 && !ttc->ttc_oldisnull[i] &&
 				VARATT_IS_EXTERNAL_ONDISK(old_value))
 			{
+                // 判断新旧值是否相同,如果相同则复用原有的线外存储数据到新版本的tuple中,否则将该col标记为需要删除旧版本的值和TOAST表中的tuple
 				if (ttc->ttc_isnull[i] ||
 					!VARATT_IS_EXTERNAL_ONDISK(new_value) ||
 					memcmp((char *) old_value, (char *) new_value,
@@ -98,7 +100,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 				}
 			}
 		}
-		else
+		else // 插入场景
 		{
 			/*
 			 * For INSERT simply get the new value
@@ -119,11 +121,13 @@ toast_tuple_init(ToastTupleContext *ttc)
 		/*
 		 * Now look at varlena attributes
 		 */
+        // 变长列属性
 		if (att->attlen == -1)
 		{
 			/*
 			 * If the table's attribute says PLAIN always, force it so.
 			 */
+            // PLAIN表示不能压缩或线外存储的类型
 			if (att->attstorage == TYPSTORAGE_PLAIN)
 				ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 
@@ -135,9 +139,11 @@ toast_tuple_init(ToastTupleContext *ttc)
 			 * PLAIN storage).  If necessary, we'll push it out as a new
 			 * external value below.
 			 */
+            // header == 0x01,线外存储
 			if (VARATT_IS_EXTERNAL(new_value))
 			{
 				ttc->ttc_attr[i].tai_oldexternal = new_value;
+                // fetch value
 				if (att->attstorage == TYPSTORAGE_PLAIN)
 					new_value = detoast_attr(new_value);
 				else
@@ -157,6 +163,7 @@ toast_tuple_init(ToastTupleContext *ttc)
 			/*
 			 * Not a varlena attribute, plain storage always
 			 */
+            // 非变长列,忽略TOAST
 			ttc->ttc_attr[i].tai_colflags |= TOASTCOL_IGNORE;
 		}
 	}
@@ -261,6 +268,7 @@ toast_tuple_externalize(ToastTupleContext *ttc, int attribute, int options)
 	ToastAttrInfo *attr = &ttc->ttc_attr[attribute];
 
 	attr->tai_colflags |= TOASTCOL_IGNORE;
+    // 写入TOAST表
 	*value = toast_save_datum(ttc->ttc_rel, old_value, attr->tai_oldexternal,
 							  options);
 	if ((attr->tai_colflags & TOASTCOL_NEEDS_FREE) != 0)

@@ -150,11 +150,14 @@ typedef struct DatumTupleFields
 	 */
 } DatumTupleFields;
 
+// tuple头信息
 struct HeapTupleHeaderData
 {
 	union
 	{
+        // 记录tuple 插入或删除的事务ID和命令ID，用于判断事务的可见性
 		HeapTupleFields t_heap;
+        // 一个新tuple的创建，通过该结构体记录其长度等信息，当插入表文件后会转换为上面的结构
 		DatumTupleFields t_datum;
 	}			t_choice;
 
@@ -164,17 +167,20 @@ struct HeapTupleHeaderData
 	/* Fields below here must match MinimalTupleData! */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_INFOMASK2 2
+    // 记录当前Tuple中的总列数
 	uint16		t_infomask2;	/* number of attributes + various flags */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_INFOMASK 3
 	uint16		t_infomask;		/* various flag bits, see below */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_HOFF 4
+    // 记录user data的首地址距离该结构体的开始地址的偏移量
 	uint8		t_hoff;			/* sizeof header incl. bitmap, padding */
 
 	/* ^ - 23 bytes - ^ */
 
 #define FIELDNO_HEAPTUPLEHEADERDATA_BITS 5
+    // 空数组,记录后续扩展内存的开始地址
 	bits8		t_bits[FLEXIBLE_ARRAY_MEMBER];	/* bitmap of NULLs */
 
 	/* MORE DATA FOLLOWS AT END OF STRUCT */

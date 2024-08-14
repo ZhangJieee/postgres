@@ -60,6 +60,7 @@
 
 
 /* Note: these two macros only work on shared buffers, not local ones! */
+// 获取指定cache block的首地址
 #define BufHdrGetBlock(bufHdr)	((Block) (BufferBlocks + ((Size) (bufHdr)->buf_id) * BLCKSZ))
 #define BufferGetLSN(bufHdr)	(PageGetLSN(BufHdrGetBlock(bufHdr)))
 
@@ -195,8 +196,11 @@ static BufferDesc *PinCountWaitBuf = NULL;
  */
 static struct PrivateRefCountEntry PrivateRefCountArray[REFCOUNT_ARRAY_ENTRIES];
 static HTAB *PrivateRefCountHash = NULL;
+// 记录PrivateRefCountArray溢出到HT的数量
 static int32 PrivateRefCountOverflowed = 0;
+// 单调递增,依赖PrivateRefCountClock来选择欲剔除的元素
 static uint32 PrivateRefCountClock = 0;
+// 指向空闲RefCountEntry实例
 static PrivateRefCountEntry *ReservedRefCountEntry = NULL;
 
 static void ReservePrivateRefCountEntry(void);
@@ -210,6 +214,7 @@ static void ForgetPrivateRefCountEntry(PrivateRefCountEntry *ref);
  * entry. This has to be called before using NewPrivateRefCountEntry() to fill
  * a new entry - but it's perfectly fine to not use a reserved entry.
  */
+// 进行策略淘汰,更新ReservedRefCountEntry指向空闲实例
 static void
 ReservePrivateRefCountEntry(void)
 {
@@ -238,6 +243,7 @@ ReservePrivateRefCountEntry(void)
 		}
 	}
 
+    // 如果RefCount数组已经满了,剔除一个实例到HT
 	/*
 	 * No luck. All array entries are full. Move one array entry into the hash
 	 * table.
@@ -269,6 +275,7 @@ ReservePrivateRefCountEntry(void)
 		ReservedRefCountEntry->buffer = InvalidBuffer;
 		ReservedRefCountEntry->refcount = 0;
 
+        // 记录溢出到HT的数量
 		PrivateRefCountOverflowed++;
 	}
 }
@@ -302,6 +309,7 @@ NewPrivateRefCountEntry(Buffer buffer)
  * do_move is true, and the entry resides in the hashtable the entry is
  * optimized for frequent access by moving it to the array.
  */
+// 这里返回buffer对应的RefCountEntry实例,根据do_move确认是否需要将存放在HT中的实例搬移到Array中
 static PrivateRefCountEntry *
 GetPrivateRefCountEntry(Buffer buffer, bool do_move)
 {
@@ -983,6 +991,7 @@ ExtendBufferedRelTo(BufferManagerRelation bmr,
 	return buffer;
 }
 
+// 定义了本地缓冲区和共享缓冲区的通用读操作
 /*
  * ReadBuffer_common -- common logic for all ReadBuffer variants
  *
@@ -1007,6 +1016,7 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	 * instead, as acquiring the extension lock inside ExtendBufferedRel()
 	 * scales a lot better.
 	 */
+    // 增加新块
 	if (unlikely(blockNum == P_NEW))
 	{
 		uint32		flags = EB_SKIP_EXTENSION_LOCK;
@@ -1057,6 +1067,7 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 		 */
 		io_context = IOContextForStrategy(strategy);
 		io_object = IOOBJECT_RELATION;
+        // 这里从共享缓冲区中寻找的指定buf,包含具体的替换策略执行,若未加载到内存则需要标记IO_IN_PROGRESS
 		bufHdr = BufferAlloc(smgr, relpersistence, forkNum, blockNum,
 							 strategy, &found, io_context);
 		if (found)
@@ -1121,6 +1132,7 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	{
 		instr_time	io_start = pgstat_prepare_io_time();
 
+        // 实际IO
 		smgrread(smgr, forkNum, blockNum, bufBlock);
 
 		pgstat_count_io_op_time(io_object, io_context,
@@ -1175,6 +1187,7 @@ ReadBuffer_common(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	}
 	else
 	{
+        // 如果是并发访问,则唤醒其他waiter
 		/* Set BM_VALID, terminate IO, and wake up any waiters */
 		TerminateBufferIO(bufHdr, false, BM_VALID);
 	}
@@ -1230,13 +1243,16 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	BufferDesc *victim_buf_hdr;
 	uint32		victim_buf_state;
 
+    // 构建tag key
 	/* create a tag so we can lookup the buffer */
 	InitBufferTag(&newTag, &smgr->smgr_rlocator.locator, forkNum, blockNum);
 
+    // 计算tag key对应的hash code和获取分区锁ID
 	/* determine its hash code and partition lock ID */
 	newHash = BufTableHashCode(&newTag);
 	newPartitionLock = BufMappingPartitionLock(newHash);
 
+    // 加读锁
 	/* see if the block is in the buffer pool already */
 	LWLockAcquire(newPartitionLock, LW_SHARED);
 	existing_buf_id = BufTableLookup(&newTag, newHash);
@@ -1252,6 +1268,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 		 */
 		buf = GetBufferDescriptor(existing_buf_id);
 
+        // 加PIN
 		valid = PinBuffer(buf, strategy);
 
 		/* Can release the mapping lock as soon as we've pinned it */
@@ -1259,8 +1276,12 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 
 		*foundPtr = true;
 
+        // 如果没有Pin成功,则表示有其他人在对该buf进行操作
 		if (!valid)
 		{
+            // 执行到这里表示两种情况
+            // 1.其他人正在读这个page,这里则会将请求加入IO队列,直到最开始的请求执行完成,其他人也就唤醒表示IO完成了,会返回false
+            // 2.先前的读操作失败了,这里会再次尝试进行读IO
 			/*
 			 * We can only get here if (a) someone else is still reading in
 			 * the page, or (b) a previous read attempt failed.  We have to
@@ -1274,6 +1295,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 				 * If we get here, previous attempts to read the buffer must
 				 * have failed ... but we shall bravely try again.
 				 */
+                // StartBufferIO返回true,即已经发起了一个新的异步IO请求,这里标记未找到
 				*foundPtr = false;
 			}
 		}
@@ -1287,6 +1309,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	 */
 	LWLockRelease(newPartitionLock);
 
+    // 通过替换策略获取一个欲剔除的目标buf
 	/*
 	 * Acquire a victim buffer. Somebody else might try to do the same, we
 	 * don't hold any conflicting locks. If so we'll have to undo our work
@@ -1300,13 +1323,17 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 	 * somebody else inserted another buffer for the tag, we'll release the
 	 * victim buffer we acquired and use the already inserted one.
 	 */
+    // 加独占锁
 	LWLockAcquire(newPartitionLock, LW_EXCLUSIVE);
+    // 因为是复用,buf tag发生了变化,需要重新插入HT
 	existing_buf_id = BufTableInsert(&newTag, newHash, victim_buf_hdr->buf_id);
+    // 这里返回一个有效的buf id表示已经有人将目标buf插入到HT中,这里我们需要释放掉上面剔除得到的buf
 	if (existing_buf_id >= 0)
 	{
 		BufferDesc *existing_buf_hdr;
 		bool		valid;
 
+        // 这里同样考虑如果有人已经先于我们完成了我们想做的事情,则这里的处理和最开始找到目标buf的处理一致
 		/*
 		 * Got a collision. Someone has already done what we were about to do.
 		 * We'll just handle this as if it were found in the buffer pool in
@@ -1318,6 +1345,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 		 * ReservePrivateRefCountEntry() before acquiring the lock, for the
 		 * rare case of such a collision.
 		 */
+        // unpin并加入到freelist
 		UnpinBuffer(victim_buf_hdr);
 
 		/*
@@ -1359,6 +1387,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 		return existing_buf_hdr;
 	}
 
+    // 这里加锁更新HT的value中记录的tag信息
 	/*
 	 * Need to lock the buffer header too in order to change its tag.
 	 */
@@ -1384,6 +1413,7 @@ BufferAlloc(SMgrRelation smgr, char relpersistence, ForkNumber forkNum,
 
 	LWLockRelease(newPartitionLock);
 
+    // 将目标buf数据读到victim buf中
 	/*
 	 * Buffer contents are currently invalid.  Try to obtain the right to
 	 * start I/O.  If StartBufferIO returns false, then someone else managed
@@ -1608,6 +1638,7 @@ again:
 
 	Assert(BUF_STATE_GET_REFCOUNT(buf_state) == 0);
 
+    // 更新refcount和usagecount,并release buf lock
 	/* Pin the buffer and then release the buffer spinlock */
 	PinBuffer_Locked(buf_hdr);
 
@@ -1644,6 +1675,7 @@ again:
 		 * one just happens to be trying to split the page the first one got
 		 * from StrategyGetBuffer.)
 		 */
+        // lock buf contenxt shared lock
 		content_lock = BufferDescriptorGetContentLock(buf_hdr);
 		if (!LWLockConditionalAcquire(content_lock, LW_SHARED))
 		{
@@ -1655,6 +1687,7 @@ again:
 			goto again;
 		}
 
+        // 这里通过strategy决定是否继续写/重用或选择另一个victim buffer
 		/*
 		 * If using a nondefault strategy, and writing the buffer would
 		 * require a WAL flush, let the strategy decide whether to go ahead
@@ -1671,6 +1704,7 @@ again:
 			lsn = BufferGetLSN(buf_hdr);
 			UnlockBufHdr(buf_hdr, buf_state);
 
+            // 对于脏页如果还没有flush && 需要重新选择victim buffer
 			if (XLogNeedsFlush(lsn)
 				&& StrategyRejectBuffer(strategy, buf_hdr, from_ring))
 			{
@@ -1681,9 +1715,11 @@ again:
 		}
 
 		/* OK, do the I/O */
+        // 将当前buf写入文件
 		FlushBuffer(buf_hdr, NULL, IOOBJECT_RELATION, io_context);
 		LWLockRelease(content_lock);
 
+        // append writeback request?
 		ScheduleBufferTagForWriteback(&BackendWritebackContext, io_context,
 									  &buf_hdr->tag);
 	}
@@ -1711,6 +1747,8 @@ again:
 						   from_ring ? IOOP_REUSE : IOOP_EVICT);
 	}
 
+    // 如果这个是通过clock sweep算法获取的,表示buf存在于HT,可能随时被其他人pin或更改
+    // 这里判断是否有其他人将该buf执行pin或有更改
 	/*
 	 * If the buffer has an entry in the buffer mapping table, delete it. This
 	 * can fail because another backend could have pinned or dirtied the
@@ -1848,6 +1886,7 @@ ExtendBufferedRelShared(BufferManagerRelation bmr,
 	 * These pages are pinned by us and not valid. While we hold the pin they
 	 * can't be acquired as victim buffers by another backend.
 	 */
+    // 这里预先从共享池中获取extend_by数量的block
 	for (uint32 i = 0; i < extend_by; i++)
 	{
 		Block		buf_block;
@@ -1886,6 +1925,7 @@ ExtendBufferedRelShared(BufferManagerRelation bmr,
 	if (flags & EB_CLEAR_SIZE_CACHE)
 		bmr.smgr->smgr_cached_nblocks[fork] = InvalidBlockNumber;
 
+    // 获取新block ID
 	first_block = smgrnblocks(bmr.smgr, fork);
 
 	/*
@@ -1932,6 +1972,7 @@ ExtendBufferedRelShared(BufferManagerRelation bmr,
 						relpath(bmr.smgr->smgr_rlocator, fork),
 						MaxBlockNumber)));
 
+    // 将扩展的新block写入到共享缓冲池中
 	/*
 	 * Insert buffers into buffer table, mark as IO_IN_PROGRESS.
 	 *
@@ -1969,6 +2010,7 @@ ExtendBufferedRelShared(BufferManagerRelation bmr,
 		 * overwrite.  Since the legitimate cases should always have left a
 		 * zero-filled buffer, complain if not PageIsNew.
 		 */
+        // 已经被其他人提前extend过block
 		if (existing_id >= 0)
 		{
 			BufferDesc *existing_hdr = GetBufferDescriptor(existing_id);
@@ -2009,13 +2051,15 @@ ExtendBufferedRelShared(BufferManagerRelation bmr,
 			 * BM_VALID between our clearing it and StartBufferIO inspecting
 			 * it.
 			 */
+            // 这里考虑的竞态情况是,目标Buf已经写入到HT,其他人则会从HT获取到该buf,但是目前该buf还没有初始化文件系统部分,需要clear BM_VALID
+            // StartBufferIO返回false表示已经有人针对目标buf执行过IO,并会将buf置为valid,这里需要loop
 			do
 			{
 				uint32		buf_state = LockBufHdr(existing_hdr);
 
 				buf_state &= ~BM_VALID;
 				UnlockBufHdr(existing_hdr, buf_state);
-			} while (!StartBufferIO(existing_hdr, true));
+			} while (!StartBufferIO(existing_hdr, true)); // block util wake up
 		}
 		else
 		{
@@ -2054,6 +2098,7 @@ ExtendBufferedRelShared(BufferManagerRelation bmr,
 	 *
 	 * We don't need to set checksum for all-zero pages.
 	 */
+    // 根据需要扩展的block个数,通过SMGR进行空间扩展和初始化
 	smgrzeroextend(bmr.smgr, fork, first_block, extend_by, false);
 
 	/*
@@ -2227,6 +2272,7 @@ ReleaseAndReadBuffer(Buffer buffer,
  * Returns true if buffer is BM_VALID, else false.  This provision allows
  * some callers to avoid an extra spinlock cycle.
  */
+// 标记buffer不可替换
 static bool
 PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy)
 {
@@ -2238,11 +2284,13 @@ PinBuffer(BufferDesc *buf, BufferAccessStrategy strategy)
 
 	ref = GetPrivateRefCountEntry(b, true);
 
+    // 首次被load
 	if (ref == NULL)
 	{
 		uint32		buf_state;
 		uint32		old_buf_state;
 
+        // 调整PrivateRefCountEntry数组空间,这里会预留新元素的位置
 		ReservePrivateRefCountEntry();
 		ref = NewPrivateRefCountEntry(b);
 
@@ -3371,6 +3419,7 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln, IOObject io_object,
 	errcallback.previous = error_context_stack;
 	error_context_stack = &errcallback;
 
+    // 打开buf所在文件
 	/* Find smgr relation for buffer */
 	if (reln == NULL)
 		reln = smgropen(BufTagGetRelFileLocator(&buf->tag), InvalidBackendId);
@@ -3410,9 +3459,11 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln, IOObject io_object,
 	 * disastrous system-wide consequences.  To make sure that can't happen,
 	 * skip the flush if the buffer isn't permanent.
 	 */
+    // 如果目标buf被标记了BM_PERMANENT,这里强制将XLog的flush进度flush到当前buffer的lsn
 	if (buf_state & BM_PERMANENT)
 		XLogFlush(recptr);
 
+    // 接下来将该buf写入到文件
 	/*
 	 * Now it's safe to write buffer to disk. Note that no one else should
 	 * have been able to write it while we were busy with log flushing because
@@ -3461,6 +3512,7 @@ FlushBuffer(BufferDesc *buf, SMgrRelation reln, IOObject io_object,
 
 	pgBufferUsage.shared_blks_written++;
 
+    // 清理dirty标志并wake up other writers
 	/*
 	 * Mark the buffer as clean (unless BM_JUST_DIRTIED has become set) and
 	 * end the BM_IO_IN_PROGRESS state.
@@ -5065,9 +5117,13 @@ IsBufferCleanupOK(Buffer buffer)
 static void
 WaitIO(BufferDesc *buf)
 {
+    // 获取该buf对应的cond
 	ConditionVariable *cv = BufferDescriptorGetIOCV(buf);
 
+    // 这里将当前进程加入Wait队列
 	ConditionVariablePrepareToSleep(cv);
+
+    // 这里不断循环判断IO进度是否完成
 	for (;;)
 	{
 		uint32		buf_state;
@@ -5084,6 +5140,7 @@ WaitIO(BufferDesc *buf)
 			break;
 		ConditionVariableSleep(cv, WAIT_EVENT_BUFFER_IO);
 	}
+    // 表示等待期间检查到完成了,这里将自己移除Wait队列
 	ConditionVariableCancelSleep();
 }
 
@@ -5093,15 +5150,19 @@ WaitIO(BufferDesc *buf)
  *	My process is executing no IO
  *	The buffer is Pinned
  *
+ * 存在多个进程同时访问同一块磁盘的操作,这里如果有人已经在执行IO了,其他人将等待这个人直到完成
  * In some scenarios there are race conditions in which multiple backends
  * could attempt the same I/O operation concurrently.  If someone else
  * has already started I/O on this buffer then we will block on the
  * I/O condition variable until he's done.
  *
+ * 输入为欲操作的目标buf,返回表示IO已经执行完成
  * Input operations are only attempted on buffers that are not BM_VALID,
  * and output operations only on buffers that are BM_VALID and BM_DIRTY,
  * so we can always tell if the work is already done.
  *
+ * 返回true表示已经将新的IO请求加入到队列中,标记为IN_PROGRESS;
+ * false则表示已经有其他人完成了IO操作,直接复用即可
  * Returns true if we successfully marked the buffer as I/O busy,
  * false if someone else already did the work.
  */
@@ -5116,6 +5177,7 @@ StartBufferIO(BufferDesc *buf, bool forInput)
 	{
 		buf_state = LockBufHdr(buf);
 
+        // 表示IO请求已处理完或还没有开始IO
 		if (!(buf_state & BM_IO_IN_PROGRESS))
 			break;
 		UnlockBufHdr(buf, buf_state);
@@ -5456,6 +5518,7 @@ ScheduleBufferTagForWriteback(WritebackContext *wb_context, IOContext io_context
 {
 	PendingWriteback *pending;
 
+    // 忽略可以直接写盘的buf
 	if (io_direct_flags & IO_DIRECT_DATA)
 		return;
 

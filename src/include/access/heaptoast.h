@@ -47,6 +47,7 @@
 
 #define TOAST_TUPLE_THRESHOLD	MaximumBytesPerTuple(TOAST_TUPLES_PER_PAGE)
 
+// 每个Page按照存放4个TOAST tuple计算每个tuple可以获取的最大空间,8k/4 = 2K > tuple real max size
 #define TOAST_TUPLE_TARGET		TOAST_TUPLE_THRESHOLD
 
 /*

@@ -249,6 +249,7 @@ heapam_tuple_insert(Relation relation, TupleTableSlot *slot, CommandId cid,
 	tuple->t_tableOid = slot->tts_tableOid;
 
 	/* Perform the insertion, and copy the resulting ItemPointer */
+    // 实际填充动作函数
 	heap_insert(relation, tuple, cid, options, bistate);
 	ItemPointerCopy(&tuple->t_self, &slot->tts_tid);
 
@@ -2537,6 +2538,8 @@ SampleHeapTupleVisible(TableScanDesc scan, Buffer buffer,
  * Definition of the heap table access method.
  * ------------------------------------------------------------------------
  */
+
+// 这里记录关于heap table的访问动作,比如Vacuum
 
 static const TableAmRoutine heapam_methods = {
 	.type = T_TableAmRoutine,

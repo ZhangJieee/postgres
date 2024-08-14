@@ -666,6 +666,7 @@ dsm_attach(dsm_handle h)
 	}
 
 	/* Create a new segment descriptor. */
+    // DSM分配一个segment
 	seg = dsm_create_descriptor();
 	seg->handle = h;
 

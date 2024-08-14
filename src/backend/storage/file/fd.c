@@ -198,8 +198,11 @@ typedef struct vfd
 	int			fd;				/* current FD, or VFD_CLOSED if none */
 	unsigned short fdstate;		/* bitflags for VFD's state */
 	ResourceOwner resowner;		/* owner, for automatic cleanup */
+    // 下一个空闲VFD所在空闲列表的位置
 	File		nextFree;		/* link to next free VFD, if in freelist */
+    // 指向访问评率逐渐增加的VFD
 	File		lruMoreRecently;	/* doubly linked recency-of-use list */
+    // 指向访问评率逐渐降低的VFD
 	File		lruLessRecently;
 	off_t		fileSize;		/* current size of file (0 if not temporary) */
 	char	   *fileName;		/* name of file, or NULL for unused VFD */
@@ -213,12 +216,14 @@ typedef struct vfd
  * needed.  'File' values are indexes into this array.
  * Note that VfdCache[0] is not a usable VFD, just a list header.
  */
+// 维护进程所持有的VFD信息,VfdCache[0]仅代表数组头,无实际意义
 static Vfd *VfdCache;
 static Size SizeVfdCache = 0;
 
 /*
  * Number of file descriptors known to be in use by VFD entries.
  */
+// 记录实际用到的文件描述符数量
 static int	nfile = 0;
 
 /*
@@ -1229,6 +1234,7 @@ Delete(File file)
 
 	vfdP = &VfdCache[file];
 
+    // 更新双向链表的前后指针
 	VfdCache[vfdP->lruLessRecently].lruMoreRecently = vfdP->lruMoreRecently;
 	VfdCache[vfdP->lruMoreRecently].lruLessRecently = vfdP->lruLessRecently;
 
@@ -1274,6 +1280,7 @@ Insert(File file)
 
 	vfdP = &VfdCache[file];
 
+    // 新插入一个节点到VfdCache[0]和VfdCache[VfdCache[0].lruLessRecently]之间
 	vfdP->lruMoreRecently = 0;
 	vfdP->lruLessRecently = VfdCache[0].lruLessRecently;
 	VfdCache[0].lruLessRecently = file;
@@ -1295,9 +1302,11 @@ LruInsert(File file)
 
 	vfdP = &VfdCache[file];
 
+    // 文件未打开
 	if (FileIsNotOpen(file))
 	{
 		/* Close excess kernel FDs. */
+        // 检查fd数量是否超过OS阈值
 		ReleaseLruFiles();
 
 		/*
@@ -1342,6 +1351,7 @@ ReleaseLruFile(void)
 		 * in the ring.
 		 */
 		Assert(VfdCache[0].lruMoreRecently != 0);
+        // 这里关闭数组头指向最不活跃节点，整个列表中lruMoreRecently属于prev指针，数组头后面的节点为最活跃节点，并指向数组头，则数组头指向的是最不活跃节点
 		LruDelete(VfdCache[0].lruMoreRecently);
 		return true;			/* freed a file */
 	}
@@ -1372,6 +1382,7 @@ AllocateVfd(void)
 
 	Assert(SizeVfdCache > 0);	/* InitFileAccess not called? */
 
+    // 无空闲空间
 	if (VfdCache[0].nextFree == 0)
 	{
 		/*
@@ -1388,6 +1399,7 @@ AllocateVfd(void)
 		/*
 		 * Be careful not to clobber VfdCache ptr if realloc fails.
 		 */
+        // 原地扩容
 		newVfdCache = (Vfd *) realloc(VfdCache, sizeof(Vfd) * newCacheSize);
 		if (newVfdCache == NULL)
 			ereport(ERROR,
@@ -1405,6 +1417,8 @@ AllocateVfd(void)
 			VfdCache[i].fd = VFD_CLOSED;
 		}
 		VfdCache[newCacheSize - 1].nextFree = 0;
+
+        // 最后更新数组头指向第一个空闲空间
 		VfdCache[0].nextFree = SizeVfdCache;
 
 		/*
@@ -1435,6 +1449,7 @@ FreeVfd(File file)
 	}
 	vfdP->fdstate = 0x0;
 
+    //更新数组头的空闲指针
 	vfdP->nextFree = VfdCache[0].nextFree;
 	VfdCache[0].nextFree = file;
 }

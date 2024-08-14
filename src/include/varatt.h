@@ -31,10 +31,14 @@
  */
 typedef struct varatt_external
 {
+    // 记录数据的原长度(+header)
 	int32		va_rawsize;		/* Original data size (includes header) */
+    // 记录数据的真实长度(即TOAST表中的数据长度+压缩类型)
 	uint32		va_extinfo;		/* External saved size (without header) and
 								 * compression method */
+    // TOAST 表中的唯一标识
 	Oid			va_valueid;		/* Unique ID of value within TOAST table */
+    // TOAST 表 OID
 	Oid			va_toastrelid;	/* RelID of TOAST table containing it */
 }			varatt_external;
 
@@ -141,10 +145,10 @@ typedef struct
 /*
  * Bit layouts for varlena headers on big-endian machines:
  *
- * 00xxxxxx 4-byte length word, aligned, uncompressed data (up to 1G)
- * 01xxxxxx 4-byte length word, aligned, *compressed* data (up to 1G)
- * 10000000 1-byte length word, unaligned, TOAST pointer
- * 1xxxxxxx 1-byte length word, unaligned, uncompressed data (up to 126b)
+ * 00xxxxxx 4-byte length word, aligned, uncompressed data (up to 1G) 固定大小
+ * 01xxxxxx 4-byte length word, aligned, *compressed* data (up to 1G) 固定大小 + 压缩
+ * 10000000 1-byte length word, unaligned, TOAST pointer              TOAST指针
+ * 1xxxxxxx 1-byte length word, unaligned, uncompressed data (up to 126b) 大小在128bit内
  *
  * Bit layouts for varlena headers on little-endian machines:
  *
@@ -213,7 +217,7 @@ typedef struct
 #define VARATT_IS_4B_U(PTR) \
 	((((varattrib_1b *) (PTR))->va_header & 0x03) == 0x00)
 #define VARATT_IS_4B_C(PTR) \
-	((((varattrib_1b *) (PTR))->va_header & 0x03) == 0x02)
+	((((varattrib_1b *) (PTR))->va_header & 0x03) == 0x02) // 01
 #define VARATT_IS_1B(PTR) \
 	((((varattrib_1b *) (PTR))->va_header & 0x01) == 0x01)
 #define VARATT_IS_1B_E(PTR) \

@@ -83,7 +83,9 @@
  */
 typedef struct
 {
+    // 第0层对应level = 2, 第1层对应level = 1, 第2层对应level = 0
 	int			level;			/* level */
+    // 所在level层的目标块
 	int			logpageno;		/* page number within the level */
 } FSMAddress;
 
@@ -98,6 +100,7 @@ static BlockNumber fsm_get_heap_blk(FSMAddress addr, uint16 slot);
 static BlockNumber fsm_logical_to_physical(FSMAddress addr);
 
 static Buffer fsm_readbuf(Relation rel, FSMAddress addr, bool extend);
+// 当前FSM块已满,扩展新的FSM块
 static Buffer fsm_extend(Relation rel, BlockNumber fsm_nblocks);
 
 /* functions to convert amount of free space to a FSM category */
@@ -178,16 +181,20 @@ RecordAndGetPageWithFreeSpace(Relation rel, BlockNumber oldPage,
  * in the FSM, the space might not become visible to searchers until the next
  * FreeSpaceMapVacuum call, which updates the upper level pages.
  */
+// 这里传入目标表的目标表块当前的空闲空间大小
 void
 RecordPageWithFreeSpace(Relation rel, BlockNumber heapBlk, Size spaceAvail)
 {
+    // 转换成FSM块对应的值
 	int			new_cat = fsm_space_avail_to_cat(spaceAvail);
 	FSMAddress	addr;
 	uint16		slot;
 
 	/* Get the location of the FSM byte representing the heap block */
+    // 获取表块对应的FSM块
 	addr = fsm_get_location(heapBlk, &slot);
 
+    // 更新FSM块的堆结构并标记脏页
 	fsm_set_and_search(rel, addr, slot, new_cat, 0);
 }
 
@@ -365,6 +372,7 @@ FreeSpaceMapVacuumRange(Relation rel, BlockNumber start, BlockNumber end)
 /*
  * Return category corresponding x bytes of free space
  */
+// 实际空闲大小转换成FSM中对应的块值,即(31 + avail)/32
 static uint8
 fsm_space_avail_to_cat(Size avail)
 {
@@ -428,6 +436,7 @@ fsm_space_needed_to_cat(Size needed)
 /*
  * Returns the physical block number of a FSM page
  */
+// 将FSM的逻辑地址转成实际FSM文件中的物理块号
 static BlockNumber
 fsm_logical_to_physical(FSMAddress addr)
 {
@@ -530,6 +539,7 @@ fsm_get_child(FSMAddress parent, uint16 slot)
 static Buffer
 fsm_readbuf(Relation rel, FSMAddress addr, bool extend)
 {
+    // 获取FSM中实际的物理块号
 	BlockNumber blkno = fsm_logical_to_physical(addr);
 	Buffer		buf;
 	SMgrRelation reln;
@@ -547,6 +557,7 @@ fsm_readbuf(Relation rel, FSMAddress addr, bool extend)
 	 * value might be stale.  (We send smgr inval messages on truncation, but
 	 * not on extension.)
 	 */
+    // 确认目标块是否存在于Cache中
 	if (reln->smgr_cached_nblocks[FSM_FORKNUM] == InvalidBlockNumber ||
 		blkno >= reln->smgr_cached_nblocks[FSM_FORKNUM])
 	{
@@ -640,6 +651,7 @@ fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
 	page = BufferGetPage(buf);
 
 	if (fsm_set_avail(page, slot, newValue))
+        // 标记脏页
 		MarkBufferDirtyHint(buf, false);
 
 	if (minValue != 0)
@@ -658,10 +670,12 @@ fsm_set_and_search(Relation rel, FSMAddress addr, uint16 slot,
 /*
  * Search the tree for a heap page with at least min_cat of free space
  */
+// 从目标Relation中查找一块空闲空间大于min_cat * 32B的空间,返回一个符合其大小的表块号
 static BlockNumber
 fsm_search(Relation rel, uint8 min_cat)
 {
 	int			restarts = 0;
+    // root node
 	FSMAddress	addr = FSM_ROOT_ADDRESS;
 
 	for (;;)
@@ -671,9 +685,11 @@ fsm_search(Relation rel, uint8 min_cat)
 		uint8		max_avail = 0;
 
 		/* Read the FSM page. */
+        // 加载目标FSM块
 		buf = fsm_readbuf(rel, addr, false);
 
 		/* Search within the page */
+        // 目标FSM块存在
 		if (BufferIsValid(buf))
 		{
 			LockBuffer(buf, BUFFER_LOCK_SHARE);
@@ -693,9 +709,11 @@ fsm_search(Relation rel, uint8 min_cat)
 			 * Descend the tree, or return the found block if we're at the
 			 * bottom.
 			 */
+            // 这里直接将目标FSM块转换成表块号并返回
 			if (addr.level == FSM_BOTTOM_LEVEL)
 				return fsm_get_heap_blk(addr, slot);
 
+            // 如果是非叶子层,则循环加载目标结点
 			addr = fsm_get_child(addr, slot);
 		}
 		else if (addr.level == FSM_ROOT_LEVEL)

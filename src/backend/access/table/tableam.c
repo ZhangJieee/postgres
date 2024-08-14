@@ -551,6 +551,7 @@ table_block_parallelscan_nextpage(Relation rel,
 	 * this worker.  We must consume all of the blocks from that before we
 	 * allocate a new chunk to the worker.
 	 */
+    // 当前page没有被读完
 	if (pbscanwork->phsw_chunk_remaining > 0)
 	{
 		/*

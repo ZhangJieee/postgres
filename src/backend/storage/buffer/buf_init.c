@@ -18,7 +18,9 @@
 #include "storage/bufmgr.h"
 #include "storage/proc.h"
 
+// 共享缓冲池的全局数组
 BufferDescPadded *BufferDescriptors;
+// 缓冲池的开始地址
 char	   *BufferBlocks;
 ConditionVariableMinimallyPadded *BufferIOCVArray;
 WritebackContext BackendWritebackContext;
@@ -126,6 +128,7 @@ InitBufferPool(void)
 
 			buf->buf_id = i;
 
+            // 初始化阶段,每个buf默认指向后一个buf
 			/*
 			 * Initially link all the buffers together as unused. Subsequent
 			 * management of this list is done by freelist.c.

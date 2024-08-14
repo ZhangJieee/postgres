@@ -1138,6 +1138,7 @@ heap_getnextslot(TableScanDesc sscan, ScanDirection direction, TupleTableSlot *s
 
 	/* Note: no locking manipulations needed */
 
+    // 读盘，将tuple所在的page信息加载到内存,其中ReadBuffer_common执行实际的IO动作,通过smgr存储管理器进行磁盘读取
 	if (sscan->rs_flags & SO_ALLOW_PAGEMODE)
 		heapgettup_pagemode(scan, direction, sscan->rs_nkeys, sscan->rs_key);
 	else
@@ -1156,6 +1157,7 @@ heap_getnextslot(TableScanDesc sscan, ScanDirection direction, TupleTableSlot *s
 
 	pgstat_count_heap_getnext(scan->rs_base.rs_rd);
 
+    // 将读到的tuple及所在的page放入到slot中
 	ExecStoreBufferHeapTuple(&scan->rs_ctup, slot,
 							 scan->rs_cbuf);
 	return true;
@@ -1833,12 +1835,17 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 * Note: below this point, heaptup is the data we actually intend to store
 	 * into the relation; tup is the caller's original untoasted data.
 	 */
+    // 初始化元组头
 	heaptup = heap_prepare_insert(relation, tup, xid, cid, options);
 
 	/*
 	 * Find buffer to insert this tuple into.  If the page is all visible,
 	 * this will also pin the requisite visibility map page.
 	 */
+    // 获取可用的page id,基本逻辑是:
+    // 1.基于上次使用的PAGE可用空间
+    // 2.根据${table_id}_fsm寻找空闲空间
+    // 3.最终在文件中申请一块新page
 	buffer = RelationGetBufferForTuple(relation, heaptup->t_len,
 									   InvalidBuffer, options, bistate,
 									   &vmbuffer, NULL,
@@ -1859,11 +1866,13 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 * lock "gaps" as index page locks do.  So we don't need to specify a
 	 * buffer when making the call, which makes for a faster check.
 	 */
+    // 冲突检查
 	CheckForSerializableConflictIn(relation, NULL, InvalidBlockNumber);
 
 	/* NO EREPORT(ERROR) from here till changes are logged */
 	START_CRIT_SECTION();
 
+    // 元组写入page
 	RelationPutHeapTuple(relation, buffer, heaptup,
 						 (options & HEAP_INSERT_SPECULATIVE) != 0);
 
@@ -1887,9 +1896,11 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 * If you do add PageSetPrunable here, add it in heap_xlog_insert too.
 	 */
 
+    // 标记page为dirty
 	MarkBufferDirty(buffer);
 
 	/* XLOG stuff */
+    // 写入WAL,PG在9系版本之前还是同步落盘,后面则是将写WAL操作单独分离到一个后台线程 walwriter
 	if (RelationNeedsWAL(relation))
 	{
 		xl_heap_insert xlrec;
@@ -1980,6 +1991,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 	 * the heaptup data structure is all in local memory, not in the shared
 	 * buffer.
 	 */
+    // 如果目标page存在于cache中,则这里需要将当前page失效
 	CacheInvalidateHeapTuple(relation, heaptup, NULL);
 
 	/* Note: speculative insertions are counted too, even if aborted later */

@@ -111,6 +111,7 @@ struct TupleTableSlotOps;
 typedef struct TupleTableSlotOps TupleTableSlotOps;
 
 /* base tuple table slot type */
+// 执行器中会将一个tuple包装成一个TupleTableSlot
 typedef struct TupleTableSlot
 {
 	NodeTag		type;

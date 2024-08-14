@@ -97,6 +97,7 @@ main(int argc, char *argv[])
 	 * localization of messages may not work right away, and messages won't go
 	 * anywhere but stderr until GUC settings get loaded.
 	 */
+    // 启动memory subsystem
 	MemoryContextInit();
 
 	/*
@@ -195,6 +196,7 @@ main(int argc, char *argv[])
 		PostgresSingleUserMain(argc, argv,
 							   strdup(get_user_name_or_exit(progname)));
 	else
+        // 启动post master进程
 		PostmasterMain(argc, argv);
 	/* the functions above should not return */
 	abort();
@@ -386,6 +388,7 @@ static void
 check_root(const char *progname)
 {
 #ifndef WIN32
+    // 以非root身份启动
 	if (geteuid() == 0)
 	{
 		write_stderr("\"root\" execution of the PostgreSQL server is not permitted.\n"
@@ -403,6 +406,10 @@ check_root(const char *progname)
 	 * trying to actively fix this situation seems more trouble than it's
 	 * worth; we'll just expend the effort to check for it.)
 	 */
+    // 这里比较进程的实际用户ID和有效用户ID是否一致
+    // 实际用户ID表示启动该进程的用户
+    // 有效用户ID表示进程执行需要特殊权限时会调整用户为有效用户身份进行运行
+    // 比如passwd命令,可以以普通用户身份运行,但是实际需要修改/etc下的信息,则运行的有效用户为root
 	if (getuid() != geteuid())
 	{
 		write_stderr("%s: real and effective user IDs must match\n",

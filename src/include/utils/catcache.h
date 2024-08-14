@@ -41,6 +41,7 @@ typedef uint32 (*CCHashFN) (Datum datum);
 /* function computing equality of two datums */
 typedef bool (*CCFastEqualFN) (Datum a, Datum b);
 
+// PG中SysCache数组元素类型
 typedef struct catcache
 {
 	int			id;				/* cache identifier --- see syscache.h */

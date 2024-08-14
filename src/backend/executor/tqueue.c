@@ -183,6 +183,7 @@ TupleQueueReaderNext(TupleQueueReader *reader, bool nowait, bool *done)
 	if (done != NULL)
 		*done = false;
 
+    // 从queue上获取一个消息
 	/* Attempt to read a message. */
 	result = shm_mq_receive(reader->queue, &nbytes, &data, nowait);
 

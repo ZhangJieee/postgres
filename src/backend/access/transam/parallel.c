@@ -1276,6 +1276,7 @@ AtEOXact_Parallel(bool isCommit)
 /*
  * Main entrypoint for parallel workers.
  */
+// 并行扫描中的 work process
 void
 ParallelWorkerMain(Datum main_arg)
 {
@@ -1330,6 +1331,7 @@ ParallelWorkerMain(Datum main_arg)
 	 * exit, which is fine.  If there were a ResourceOwner, it would acquire
 	 * ownership of the mapping, but we have no need for that.
 	 */
+    // 将work process的args 绑定到DSM segment上
 	seg = dsm_attach(DatumGetUInt32(main_arg));
 	if (seg == NULL)
 		ereport(ERROR,
@@ -1348,6 +1350,7 @@ ParallelWorkerMain(Datum main_arg)
 	/* Arrange to signal the leader if we exit. */
 	ParallelLeaderPid = fps->parallel_leader_pid;
 	ParallelLeaderBackendId = fps->parallel_leader_backend_id;
+    // 注册退出回调
 	before_shmem_exit(ParallelWorkerShutdown, PointerGetDatum(seg));
 
 	/*
@@ -1413,6 +1416,7 @@ ParallelWorkerMain(Datum main_arg)
 
 	entrypt = LookupParallelWorkerFunction(library_name, function_name);
 
+    // 这里恢复work process 和 db 的连接
 	/* Restore database connection. */
 	BackgroundWorkerInitializeConnectionByOid(fps->database_id,
 											  fps->authenticated_user_id,
@@ -1446,6 +1450,7 @@ ParallelWorkerMain(Datum main_arg)
 	combocidspace = shm_toc_lookup(toc, PARALLEL_KEY_COMBO_CID, false);
 	RestoreComboCIDState(combocidspace);
 
+    // 绑定per-session segment
 	/* Attach to the per-session DSM segment and contained objects. */
 	session_dsm_handle_space =
 		shm_toc_lookup(toc, PARALLEL_KEY_SESSION_DSM, false);
@@ -1530,14 +1535,17 @@ ParallelWorkerMain(Datum main_arg)
 	 * hereafter.
 	 */
 	InitializingParallelWorker = false;
+    // 标记并行mode
 	EnterParallelMode();
 
 	/*
 	 * Time to do the real work: invoke the caller-supplied code.
 	 */
+    // ParallelQueryMain
 	entrypt(seg, toc);
 
 	/* Must exit parallel mode to pop active snapshot. */
+    // 置位并行mode
 	ExitParallelMode();
 
 	/* Must pop active snapshot so snapmgr.c doesn't complain. */
@@ -1546,9 +1554,11 @@ ParallelWorkerMain(Datum main_arg)
 	/* Shut down the parallel-worker transaction. */
 	EndParallelWorkerTransaction();
 
+    // detach 当前 session
 	/* Detach from the per-session DSM segment. */
 	DetachSession();
 
+    // 上报
 	/* Report success. */
 	pq_putmessage(PqMsg_Terminate, NULL, 0);
 }

@@ -152,6 +152,7 @@ PageXLogRecPtrGet(PageXLogRecPtr val)
  * are 15 bits.
  */
 
+// BT page中的header信息
 typedef struct PageHeaderData
 {
 	/* XXX LSN is member of *any* block, not only page-organized ones */
@@ -366,6 +367,7 @@ PageGetItem(Page page, ItemId itemId)
  *		NOTE: if the page is not initialized (pd_lower == 0), we must
  *		return zero to ensure sane behavior.
  */
+// 返回目标Page的Tuple个数
 static inline OffsetNumber
 PageGetMaxOffsetNumber(Page page)
 {

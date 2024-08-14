@@ -235,6 +235,7 @@ ConditionVariableCancelSleep(void)
 	if (cv == NULL)
 		return false;
 
+    // 这里需要将自己移除Wait队列,如果不存在意味着被Signal了
 	SpinLockAcquire(&cv->mutex);
 	if (proclist_contains(&cv->wakeup, MyProc->pgprocno, cvWaitLink))
 		proclist_delete(&cv->wakeup, MyProc->pgprocno, cvWaitLink);
@@ -306,9 +307,13 @@ ConditionVariableBroadcast(ConditionVariable *cv)
 	 * prepared CV sleep.  The next call to ConditionVariableSleep will take
 	 * care of re-establishing the lost state.
 	 */
+    // 先将当前的cv_sleep_target置空
 	if (cv_sleep_target != NULL)
 		ConditionVariableCancelSleep();
 
+    // 这里检查队列的状态：
+    // 1.队列为空，不做任何事
+    // 2.不为空，选择唤醒第一个节点并将当前进程插入到队列尾部
 	/*
 	 * Inspect the state of the queue.  If it's empty, we have nothing to do.
 	 * If there's exactly one entry, we need only remove and signal that
@@ -329,6 +334,7 @@ ConditionVariableBroadcast(ConditionVariable *cv)
 	}
 	SpinLockRelease(&cv->mutex);
 
+    // 唤醒取出的头节点
 	/* Awaken first waiter, if there was one. */
 	if (proc != NULL)
 		SetLatch(&proc->procLatch);
@@ -346,6 +352,8 @@ ConditionVariableBroadcast(ConditionVariable *cv)
 		 * third process that added itself to the list after we added the
 		 * sentinel.  Better to give a spurious wakeup (which should be
 		 * harmless beyond wasting some cycles) than to lose a wakeup.
+		 *
+		 * 这里考虑如果在这次循环之前有人已经将我们的sentinel移除队列,这时候我们在退出前会额外的唤醒一个进程
 		 */
 		proc = NULL;
 		SpinLockAcquire(&cv->mutex);

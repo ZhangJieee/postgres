@@ -74,6 +74,7 @@ fsm_set_avail(Page page, int slot, uint8 value)
 	if (oldvalue == value && value <= fsmpage->fp_nodes[0])
 		return false;
 
+    // 更新叶子结点
 	fsmpage->fp_nodes[nodeno] = value;
 
 	/*
@@ -106,6 +107,7 @@ fsm_set_avail(Page page, int slot, uint8 value)
 	 * sanity check: if the new value is (still) higher than the value at the
 	 * top, the tree is corrupt.  If so, rebuild.
 	 */
+    // 确认新的空闲值如果大于root node,表示树存在异常,需要重建 FIXME
 	if (value > fsmpage->fp_nodes[0])
 		fsm_rebuild_page(page);
 
@@ -170,6 +172,7 @@ restart:
 	 * Check the root first, and exit quickly if there's no leaf with enough
 	 * free space
 	 */
+    // 对比root node,基于最大堆的二叉树,通过顶层节点确认叶子节点是否存在可用空间
 	if (fsmpage->fp_nodes[0] < minvalue)
 		return -1;
 
@@ -178,6 +181,7 @@ restart:
 	 * sane.  (This also handles wrapping around when the prior call returned
 	 * the last slot on the page.)
 	 */
+    // 调整target指向目标叶子结点,基于上一次的查询结果
 	target = fsmpage->fp_next_slot;
 	if (target < 0 || target >= LeafNodesPerPage)
 		target = 0;
@@ -222,6 +226,12 @@ restart:
 	 * third level.  7 satisfies our search, so we descend down to the bottom,
 	 * following the path of sevens.  This is in fact the first suitable page
 	 * to the right of (allowing for wraparound) our start point.
+	 *
+	 * 查询过程
+	 * 假设target目前指向5这个叶子结点,我们需要寻找一个大于等于6个空闲空间:
+	 * iter 1: 当前叶子5不满足,则移至右结点的parent-5
+	 * iter 2: 当前非叶子结点依然不满足,移至右节点,不过这里已经是第3层结点的终点,则回归起点-5,并移至其的parent-7
+	 * iter 3: 确认7满足需求,则不断向下寻找7所对应的叶子结点
 	 *----------
 	 */
 	nodeno = target;
@@ -234,6 +244,7 @@ restart:
 		 * Move to the right, wrapping around on same level if necessary, then
 		 * climb up.
 		 */
+        // 获取右邻结点的parent结点,确认是否存在可用空间,这里查找的过程不断往上查询，直到root node
 		nodeno = parentof(rightneighbor(nodeno));
 	}
 
@@ -242,16 +253,20 @@ restart:
 	 * the tree. Descend to the bottom, following a path with enough free
 	 * space, preferring to move left if there's a choice.
 	 */
+    // 非叶子结点,则根据结点值定位到目标叶子结点即可
 	while (nodeno < NonLeafNodesPerPage)
 	{
 		int			childnodeno = leftchild(nodeno);
 
+        // left child node satisfies
 		if (childnodeno < NodesPerPage &&
 			fsmpage->fp_nodes[childnodeno] >= minvalue)
 		{
 			nodeno = childnodeno;
 			continue;
 		}
+
+        // right child node satisfies
 		childnodeno++;			/* point to right child */
 		if (childnodeno < NodesPerPage &&
 			fsmpage->fp_nodes[childnodeno] >= minvalue)
@@ -268,6 +283,10 @@ restart:
 			 *
 			 * Fix the corruption and restart.
 			 */
+
+            // torn page，表示计算机内存中的一页被意外分裂,其中的一部分被恶意修改,导数数据出现不一致的情况
+            // 常见原因比如内存损坏、OS崩溃等,或者上面所提到的,在将一个页写盘时,部分写入后发生Crash
+            // 这里进行修复并重新执行这个查找过程
 			RelFileLocator rlocator;
 			ForkNumber	forknum;
 			BlockNumber blknum;
@@ -289,6 +308,7 @@ restart:
 		}
 	}
 
+    // 更新下一次查询的叶子结点位置 FIXME
 	/* We're now at the bottom level, at a node with enough space. */
 	slot = nodeno - NonLeafNodesPerPage;
 
@@ -338,6 +358,7 @@ fsm_truncate_avail(Page page, int nslots)
  * Reconstructs the upper levels of a page. Returns true if the page
  * was modified.
  */
+// 重新构造page中的非叶子层结点
 bool
 fsm_rebuild_page(Page page)
 {

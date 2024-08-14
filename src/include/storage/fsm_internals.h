@@ -21,6 +21,8 @@
  * Structure of a FSM page. See src/backend/storage/freespace/README for
  * details.
  */
+
+// FSM文件中FSM块的内部结构
 typedef struct
 {
 	/*
@@ -32,6 +34,7 @@ typedef struct
 	 * appropriate, but int is more likely to be atomically
 	 * fetchable/storable.
 	 */
+    // 用于提示下一次开始查询二叉树的叶子节点位置
 	int			fp_next_slot;
 
 	/*
@@ -39,6 +42,7 @@ typedef struct
 	 * NonLeafNodesPerPage elements are upper nodes, and the following
 	 * LeafNodesPerPage elements are leaf nodes. Unused nodes are zero.
 	 */
+    // 构建一个最大堆
 	uint8		fp_nodes[FLEXIBLE_ARRAY_MEMBER];
 } FSMPageData;
 

@@ -57,12 +57,12 @@
  * entry associated with the buffer's tag.
  */
 #define BM_LOCKED				(1U << 22)	/* buffer header is locked */
-#define BM_DIRTY				(1U << 23)	/* data needs writing */
+#define BM_DIRTY				(1U << 23)	/* data needs writing */         // 表示当前已是脏页,需要同步磁盘
 #define BM_VALID				(1U << 24)	/* data is valid */
 #define BM_TAG_VALID			(1U << 25)	/* tag is assigned */
 #define BM_IO_IN_PROGRESS		(1U << 26)	/* read or write in progress */
 #define BM_IO_ERROR				(1U << 27)	/* previous I/O failed */
-#define BM_JUST_DIRTIED			(1U << 28)	/* dirtied since write started */
+#define BM_JUST_DIRTIED			(1U << 28)	/* dirtied since write started */ // 最近刚被标记为脏页
 #define BM_PIN_COUNT_WAITER		(1U << 29)	/* have waiter for sole pin */
 #define BM_CHECKPOINT_NEEDED	(1U << 30)	/* must write for checkpoint */
 #define BM_PERMANENT			(1U << 31)	/* permanent buffer (not unlogged,
@@ -243,12 +243,15 @@ BufMappingPartitionLockByIndex(uint32 index)
  */
 typedef struct BufferDesc
 {
+    // 页ID,指明对应的物理信息
 	BufferTag	tag;			/* ID of page contained in buffer */
 	int			buf_id;			/* buffer's index number (from 0) */
 
 	/* state of the tag, containing flags, refcount and usagecount */
 	pg_atomic_uint32 state;
 
+    // 用于记录一个请求修改缓冲块的进程ID,欲修改的块存在其他进程访问则不能物理删除tuple,会将该进程ID记录到这里,并refcount+1,阻塞直到其他进程不再访问该块
+    // 最后一个访问的进程会向该进程ID发送消息
 	int			wait_backend_pgprocno;	/* backend of pin-count waiter */
 	int			freeNext;		/* link in freelist chain */
 	LWLock		content_lock;	/* to lock access to buffer contents */

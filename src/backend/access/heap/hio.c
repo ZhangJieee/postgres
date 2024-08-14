@@ -57,6 +57,7 @@ RelationPutHeapTuple(Relation relation,
 			 (tuple->t_data->t_infomask & HEAP_XMAX_IS_MULTI)));
 
 	/* Add the tuple to the page */
+    // 根据block id获取目标page
 	pageHeader = BufferGetPage(buffer);
 
 	offnum = PageAddItem(pageHeader, (Item) tuple->t_data,
@@ -66,6 +67,7 @@ RelationPutHeapTuple(Relation relation,
 		elog(PANIC, "failed to add tuple to page");
 
 	/* Update tuple->t_self to the actual position where it was stored */
+    // 这里将tuple所在的block id和offset信息保存到tuple header信息中
 	ItemPointerSet(&(tuple->t_self), BufferGetBlockNumber(buffer), offnum);
 
 	/*
@@ -530,6 +532,7 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	/*
 	 * If we're gonna fail for oversize tuple, do it right away
 	 */
+    // 超过最大tuple大小限制
 	if (len > MaxHeapTupleSize)
 		ereport(ERROR,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
@@ -576,12 +579,17 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	else
 		targetBlock = RelationGetTargetBlock(relation);
 
+    // 上一个page中无可用空间,考虑从${table_id}_fsm中查找空间page
 	if (targetBlock == InvalidBlockNumber && use_fsm)
 	{
 		/*
 		 * We have no cached target page, so ask the FSM for an initial
 		 * target.
 		 */
+        // 获取可用page
+        // 1.从FSM中查找
+        // 2.否则从磁盘文件获取一个新page
+        // 3.没有空间可用,返回-1
 		targetBlock = GetPageWithFreeSpace(relation, targetFreeSpace);
 	}
 
@@ -599,6 +607,10 @@ RelationGetBufferForTuple(Relation relation, Size len,
 	}
 
 loop:
+    // 1.将target block 加载到内存
+    // 2.buffer 可见性检查
+    // 3.标记该page为dirty(这里只会针对新page标记dirty,如果是update或是复用已有的page,不会在这一步标记dirty)
+    // 4.返回target block id
 	while (targetBlock != InvalidBlockNumber)
 	{
 		/*
@@ -686,6 +698,7 @@ loop:
 		 * Now we can check to see if there's enough free space here. If so,
 		 * we're done.
 		 */
+        // 获取page,同时针对新page标记dirty
 		page = BufferGetPage(buffer);
 
 		/*
@@ -700,6 +713,7 @@ loop:
 			MarkBufferDirty(buffer);
 		}
 
+        // 检查page是否有足够的空闲空间
 		pageFreeSpace = PageGetHeapFreeSpace(page);
 		if (targetFreeSpace <= pageFreeSpace)
 		{

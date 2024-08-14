@@ -36,12 +36,15 @@
  * SMgrRelations that do not have an "owner" are considered to be transient,
  * and are deleted at end of transaction.
  */
+// 一个表对应一个Relation对象
 typedef struct SMgrRelationData
 {
 	/* rlocator is the hashtable lookup key, so it must be first! */
+    // 标识relation物理存储信息的字段,hashtable中的key
 	RelFileLocatorBackend smgr_rlocator;	/* relation physical identifier */
 
 	/* pointer to owning pointer, or NULL if none */
+    // 记录该relation的owner
 	struct SMgrRelationData **smgr_owner;
 
 	/*
@@ -50,7 +53,9 @@ typedef struct SMgrRelationData
 	 * currently only reliable during recovery, since there is no cache
 	 * invalidation for fork extension.
 	 */
+    // 当前插入块号
 	BlockNumber smgr_targblock; /* current insertion target block */
+    // 缓存的最大已知块号
 	BlockNumber smgr_cached_nblocks[MAX_FORKNUM + 1];	/* last known size */
 
 	/* additional public fields may someday exist here */
@@ -59,16 +64,28 @@ typedef struct SMgrRelationData
 	 * Fields below here are intended to be private to smgr.c and its
 	 * submodules.  Do not touch them from elsewhere.
 	 */
+    // 0表示磁盘
 	int			smgr_which;		/* storage manager selector */
 
 	/*
 	 * for md.c; per-fork arrays of the number of open segments
 	 * (md_num_open_segs) and the segments themselves (md_seg_fds).
 	 */
+    // 举例
+    // md_seg_fds[0] = {0, 1, 2} // 已经打开的文件集合
+    // md_num_open_segs[0] = 3   // 记录已打开文件的最大值
+    // md_seg_fds[1] = {0, 1}
+    // md_num_open_segs[1] = 2
+
+    // 存储已经open的seg文件段最大值(对于所有分支)
 	int			md_num_open_segs[MAX_FORKNUM + 1];
+    // 存储每个seg文件对应的vfd下标(对于所有分支)
+    // 这里第一行MAIN_FORKNUM,第二行是FSM,随后是VM,每行中的文件是按照1G大小进行分割，达到阈值则会建新文件，即添加新列
+    // 较大的表文件会被切分成多个文件,其中segno表示该文件位于表文件中的某一段
 	struct _MdfdVec *md_seg_fds[MAX_FORKNUM + 1];
 
 	/* if unowned, list link in list of all unowned SMgrRelations */
+    // 将smgr_owner为空的relation加入到该双向列表中,用于后续事务结束后的删除操作
 	dlist_node	node;
 } SMgrRelationData;
 

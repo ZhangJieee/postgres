@@ -159,7 +159,7 @@ typedef struct HashMemoryChunkData *HashMemoryChunk;
  * followed by variable-sized objects, they are arranged in contiguous memory
  * but not accessed directly as an array.
  */
-typedef struct ParallelHashJoinBatch
+typedef struct ParallelHashJoinBatch // 并行hash join会将inner和outer拆分成一堆的batch,可以理解为hash table中的同一个range,实际worker获取目标index的inner batch和outer batch进行join
 {
 	dsa_pointer buckets;		/* array of hash table buckets */
 	Barrier		batch_barrier;	/* synchronization for joining this batch */

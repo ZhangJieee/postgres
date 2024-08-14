@@ -2099,7 +2099,7 @@ typedef struct MergeJoinState
 typedef struct HashJoinTupleData *HashJoinTuple;
 typedef struct HashJoinTableData *HashJoinTable;
 
-typedef struct HashJoinState
+typedef struct HashJoinState // 对应的exec函数是ExecHashJoinImpl,负责驱动整个join的过程,主要有3个动作:驱动inner table, outer table,probe
 {
 	JoinState	js;				/* its first field is NodeTag */
 	ExprState  *hashclauses;
@@ -2655,7 +2655,7 @@ typedef struct SharedHashInfo
  *	 HashState information
  * ----------------
  */
-typedef struct HashState
+typedef struct HashState // 对应的exec函数是MultiExecParallelHash,负责并行的build inner table
 {
 	PlanState	ps;				/* its first field is NodeTag */
 	HashJoinTable hashtable;	/* hash table for the hashjoin */

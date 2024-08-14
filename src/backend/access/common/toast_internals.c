@@ -152,10 +152,12 @@ toast_save_datum(Relation rel, Datum value,
 	 * uniqueness of the OID we assign to the toasted item, even though it has
 	 * additional columns besides OID.
 	 */
+    // 向目标表关联的TOAST表中写入TOAST tuple
 	toastrel = table_open(rel->rd_rel->reltoastrelid, RowExclusiveLock);
 	toasttupDesc = toastrel->rd_att;
 
 	/* Open all the toast indexes and look for the valid one */
+    // 获取目标TOAST表的索引信息并返回一个有效的索引值
 	validIndex = toast_open_indexes(toastrel,
 									RowExclusiveLock,
 									&toastidxs,
@@ -171,16 +173,21 @@ toast_save_datum(Relation rel, Datum value,
 	 * records and the compression method in first 2 bits if data is
 	 * compressed.
 	 */
+    // 1B以内的数据,首位为1,其余位保存实际数据
 	if (VARATT_IS_SHORT(dval))
 	{
+        // data ptr
 		data_p = VARDATA_SHORT(dval);
+        // data real length
 		data_todo = VARSIZE_SHORT(dval) - VARHDRSZ_SHORT;
 		toast_pointer.va_rawsize = data_todo + VARHDRSZ;	/* as if not short */
 		toast_pointer.va_extinfo = data_todo;
 	}
 	else if (VARATT_IS_COMPRESSED(dval))
 	{
+        // data ptr
 		data_p = VARDATA(dval);
+        // data real length
 		data_todo = VARSIZE(dval) - VARHDRSZ;
 		/* rawsize in a compressed datum is just the size of the payload */
 		toast_pointer.va_rawsize = VARDATA_COMPRESSED_GET_EXTSIZE(dval) + VARHDRSZ;
@@ -207,10 +214,11 @@ toast_save_datum(Relation rel, Datum value,
 	 * of the table's real permanent toast table instead.  rd_toastoid is set
 	 * if we have to substitute such an OID.
 	 */
+    // 将TOAST OID写入TOAST指针结构
 	if (OidIsValid(rel->rd_toastoid))
 		toast_pointer.va_toastrelid = rel->rd_toastoid;
 	else
-		toast_pointer.va_toastrelid = RelationGetRelid(toastrel);
+		toast_pointer.va_toastrelid = RelationGetRelid(toastrel); // relation id
 
 	/*
 	 * Choose an OID to use as the value ID for this toast value.
@@ -224,6 +232,7 @@ toast_save_datum(Relation rel, Datum value,
 	 * options have been changed), we have to pick a value ID that doesn't
 	 * conflict with either new or existing toast value OIDs.
 	 */
+    // 为当前TOAST tuple生成唯一ID,用于在TOAST表中的唯一标识
 	if (!OidIsValid(rel->rd_toastoid))
 	{
 		/* normal case: just choose an unused OID */
@@ -293,6 +302,9 @@ toast_save_datum(Relation rel, Datum value,
 	/*
 	 * Initialize constant parts of the tuple data
 	 */
+    // values[0] value id
+    // values[1] chunk seq id
+    // values[2] chunk data
 	t_values[0] = ObjectIdGetDatum(toast_pointer.va_valueid);
 	t_values[2] = PointerGetDatum(&chunk_data);
 	t_isnull[0] = false;
@@ -319,8 +331,10 @@ toast_save_datum(Relation rel, Datum value,
 		t_values[1] = Int32GetDatum(chunk_seq++);
 		SET_VARSIZE(&chunk_data, chunk_size + VARHDRSZ);
 		memcpy(VARDATA(&chunk_data), data_p, chunk_size);
+        // 构造Tuple
 		toasttup = heap_form_tuple(toasttupDesc, t_values, t_isnull);
 
+        // 写入
 		heap_insert(toastrel, toasttup, mycid, options, NULL);
 
 		/*
@@ -334,6 +348,7 @@ toast_save_datum(Relation rel, Datum value,
 		 * Note also that there had better not be any user-created index on
 		 * the TOAST table, since we don't bother to update anything else.
 		 */
+        // 创建新的索引entry
 		for (i = 0; i < num_indexes; i++)
 		{
 			/* Only index relations marked as ready can be updated */
@@ -363,13 +378,16 @@ toast_save_datum(Relation rel, Datum value,
 	 * commit, so as a concurrent reindex done directly on the toast relation
 	 * would be able to wait for this transaction.
 	 */
+    // 关闭资源
 	toast_close_indexes(toastidxs, num_indexes, NoLock);
 	table_close(toastrel, NoLock);
 
 	/*
 	 * Create the TOAST pointer value that we'll return
 	 */
+    // 最后返回一个TOAST指针对象,会写入到原始表中
 	result = (struct varlena *) palloc(TOAST_POINTER_SIZE);
+    // 设置线外存储标志
 	SET_VARTAG_EXTERNAL(result, VARTAG_ONDISK);
 	memcpy(VARDATA_EXTERNAL(result), &toast_pointer, sizeof(toast_pointer));
 
@@ -561,6 +579,7 @@ toast_get_valid_index(Oid toastoid, LOCKMODE lock)
  *	relation in this array. It is the responsibility of the caller of this
  *	function to close the indexes as well as free them.
  */
+// 获取Relation关联的索引数组并返回第一个有效的索引所在数组的下标
 int
 toast_open_indexes(Relation toastrel,
 				   LOCKMODE lock,

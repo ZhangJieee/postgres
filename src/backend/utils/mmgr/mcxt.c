@@ -138,6 +138,8 @@ MemoryContext CurrentMemoryContext = NULL;
  * Standard top-level contexts. For a description of the purpose of each
  * of these contexts, refer to src/backend/utils/mmgr/README
  */
+// AllocSetContext结构体中第一个指针指向MemoryContextData,类似于MemoryContextData为父类,AllocSetContext则是在父类的基础上加了子类的属性
+// 同时MemoryContextData记录了基本的操作方法函数指针,不同的memorycontext则会替换自己的回调动作
 MemoryContext TopMemoryContext = NULL;
 MemoryContext ErrorContext = NULL;
 MemoryContext PostmasterContext = NULL;
@@ -982,6 +984,7 @@ MemoryContextCreate(MemoryContext node,
 	/* Initialize all standard fields of memory context header */
 	node->type = tag;
 	node->isReset = true;
+    // 初始化实际的回调动作
 	node->methods = &mcxt_methods[method_id];
 	node->parent = parent;
 	node->firstchild = NULL;

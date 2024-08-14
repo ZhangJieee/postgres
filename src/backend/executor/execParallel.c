@@ -1443,6 +1443,8 @@ ParallelQueryMain(dsm_segment *seg, shm_toc *toc)
 	}
 	pwcxt.toc = toc;
 	pwcxt.seg = seg;
+
+    // 初始化执行器
 	ExecParallelInitializeWorker(queryDesc->planstate, &pwcxt);
 
 	/* Pass down any tuple bound */

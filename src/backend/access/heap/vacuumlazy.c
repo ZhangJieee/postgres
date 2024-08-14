@@ -366,6 +366,8 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 
 	/* Set up high level stuff about rel and its indexes */
 	vacrel->rel = rel;
+
+    // 打开关系表索引并获取索引数量
 	vac_open_indexes(vacrel->rel, RowExclusiveLock, &vacrel->nindexes,
 					 &vacrel->indrels);
 	vacrel->bstrategy = bstrategy;
@@ -503,6 +505,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 	 * Call lazy_scan_heap to perform all required heap pruning, index
 	 * vacuuming, and heap vacuuming (plus related processing)
 	 */
+    // 主要处理函数
 	lazy_scan_heap(vacrel);
 
 	/*
@@ -786,7 +789,7 @@ heap_vacuum_rel(Relation rel, VacuumParams *params,
 }
 
 /*
- *	lazy_scan_heap() -- workhorse function for VACUUM
+ *	lazy_scan_heap() -- workhorse function for VACUUM (Vacuum的主要处理动作)
  *
  *		This routine prunes each page in the heap, and considers the need to
  *		freeze remaining tuples with storage (not including pages that can be

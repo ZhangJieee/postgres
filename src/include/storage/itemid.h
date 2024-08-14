@@ -22,6 +22,7 @@
  * storage on the page.  By convention, lp_len == 0 in every line pointer
  * that does not have storage, independently of its lp_flags state.
  */
+// tuple指针,记录offset,flag,长度
 typedef struct ItemIdData
 {
 	unsigned	lp_off:15,		/* offset to tuple (from start of page) */

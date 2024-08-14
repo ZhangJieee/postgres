@@ -78,14 +78,18 @@ typedef struct MemoryContextMethods
 
 typedef struct MemoryContextData
 {
+    // 为该结构体添加abstract属性,具体abstract的实现则是根据结构体的类型
 	pg_node_attr(abstract)		/* there are no nodes of this type */
 
 	NodeTag		type;			/* identifies exact kind of context */
 	/* these two fields are placed here to minimize alignment wastage: */
+    // 记录上次重置后是否有内存申请操作
 	bool		isReset;		/* T = no space alloced since last reset */
 	bool		allowInCritSection; /* allow palloc in critical section */
 	Size		mem_allocated;	/* track memory allocated for this context */
+    // 父类中定义的函数指针
 	const MemoryContextMethods *methods;	/* virtual function table */
+    // 形成memory context的BTree
 	MemoryContext parent;		/* NULL if no parent (toplevel context) */
 	MemoryContext firstchild;	/* head of linked list of children */
 	MemoryContext prevchild;	/* previous child of same parent */

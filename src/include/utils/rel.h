@@ -51,9 +51,10 @@ typedef LockInfoData *LockInfo;
 /*
  * Here are the contents of a relation cache entry.
  */
-
+// 记录一个表的模式信息
 typedef struct RelationData
 {
+    // 表的物理标识,包括表空间,数据库、表的OID
 	RelFileLocator rd_locator;	/* relation physical identifier */
 	SMgrRelation rd_smgr;		/* cached file handle, or NULL */
 	int			rd_refcnt;		/* reference count */
@@ -108,7 +109,9 @@ typedef struct RelationData
 													 * any value */
 	SubTransactionId rd_droppedSubid;	/* dropped with another Subid set */
 
+    // 表在pg_class系统表中对应的tuple信息
 	Form_pg_class rd_rel;		/* RELATION tuple */
+    // 描述表的列属性
 	TupleDesc	rd_att;			/* tuple descriptor */
 	Oid			rd_id;			/* relation's object id */
 	LockInfoData rd_lockInfo;	/* lock mgr's info for locking relation */
@@ -149,6 +152,7 @@ typedef struct RelationData
 	MemoryContext rd_partcheckcxt;	/* private cxt for rd_partcheck, if any */
 
 	/* data managed by RelationGetIndexList: */
+    // 表上所有索引的OID链表
 	List	   *rd_indexlist;	/* list of OIDs of indexes on relation */
 	Oid			rd_pkindex;		/* OID of primary key, if any */
 	Oid			rd_replidindex; /* OID of replica identity index, if any */
@@ -160,6 +164,7 @@ typedef struct RelationData
 	bool		rd_attrsvalid;	/* are bitmaps of attrs valid? */
 	Bitmapset  *rd_keyattr;		/* cols that can be ref'd by foreign keys */
 	Bitmapset  *rd_pkattr;		/* cols included in primary key */
+    // 各索引用到的属性
 	Bitmapset  *rd_idattr;		/* included in replica identity index */
 	Bitmapset  *rd_hotblockingattr; /* cols blocking HOT update */
 	Bitmapset  *rd_summarizedattr;	/* cols indexed by summarizing indexes */
@@ -188,6 +193,7 @@ typedef struct RelationData
 	const struct TableAmRoutine *rd_tableam;
 
 	/* These are non-NULL only for an index relation: */
+    // 当前Relation对应的是一个索引表,这里记录在pg_index中的信息
 	Form_pg_index rd_index;		/* pg_index tuple describing this index */
 	/* use "struct" here to avoid needing to include htup.h: */
 	struct HeapTupleData *rd_indextuple;	/* all of pg_index tuple */

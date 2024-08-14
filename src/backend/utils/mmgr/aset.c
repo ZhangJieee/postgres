@@ -153,12 +153,21 @@ typedef struct AllocSetContext
 {
 	MemoryContextData header;	/* Standard memory-context fields */
 	/* Info about storage allocated in this context: */
+    // 内存块链表,memory context通过OS获取一大块内存后,会由他进行维护
 	AllocBlock	blocks;			/* head of list of blocks in this set */
+    // 内存片回收数组,每个数组元素下维护一个特定内存片大小的链表
+    // 大小以2的幂逐渐增大,开始8B,最大是8KB,根据内存片大小计算下标的公式:log(Size)-3
 	MemoryChunk *freelist[ALLOCSET_NUM_FREELISTS];	/* free chunk lists */
 	/* Allocation parameters for this context: */
+    // 申请的第一个blcok大小
 	uint32		initBlockSize;	/* initial block size */
+    // 申请的最大blcok大小
 	uint32		maxBlockSize;	/* maximum block size */
+    // 下一次申请的blcok大小
 	uint32		nextBlockSize;	/* next block size to allocate */
+    // 申请内存片的阈值
+    // 该值开始默认值为8K,后面会适当缩小到maxBlockSize的1/8
+    // 主要目的在于减少内存片空间的浪费(内存块的最后一段内存不足以分配一个内存片,会被舍弃,理论浪费掉的最大内存为allocChunkLimit)
 	uint32		allocChunkLimit;	/* effective chunk size limit */
 	/* freelist this context could be put in, or -1 if not a candidate: */
 	int			freeListIndex;	/* index in context_freelists[], or -1 */
@@ -178,12 +187,16 @@ typedef AllocSetContext *AllocSet;
  *		AllocBlockData is the header data for a block --- the usable space
  *		within the block begins at the next alignment boundary.
  */
+// 通过OS获取一个内存块后,初始化内存块结构体于块头
 typedef struct AllocBlockData
 {
 	AllocSet	aset;			/* aset that owns this block */
+    // 构建内存块链表
 	AllocBlock	prev;			/* prev block in aset's blocks list, if any */
 	AllocBlock	next;			/* next block in aset's blocks list, if any */
+    // 指向内存块的空闲开始地址
 	char	   *freeptr;		/* start of free space in this block */
+    // 指向内存块的空闲结束地址
 	char	   *endptr;			/* end of space in this block */
 }			AllocBlockData;
 
@@ -333,9 +346,13 @@ AllocSetFreeIndex(Size size)
  *
  * parent: parent context, or NULL if top-level context
  * name: name of context (must be statically allocated)
- * minContextSize: minimum context size
- * initBlockSize: initial allocation block size
- * maxBlockSize: maximum allocation block size
+ * minContextSize: minimum context size 创建context时申请的内存块大小
+ *  一般创建context不会指定该参数,如果指定了并且大于一定大小(一个内存块结构体大小+一个内存片结构体大小),则会在创建阶段创建一个minContextSize大小的内存块
+ *  比如ErrorContext在创建时会传递一个8K的大小,这样做是考虑当系统出现OOM时,错误处理流程依然可以获取到空间来记录错误信息,用于保证后续错误处理流程的正常执行
+ * initBlockSize: initial allocation block size 该context第一次申请内存块大小
+ * maxBlockSize: maximum allocation block size 该context可以申请的最大内存块大小
+ * initBlockSize表示第一次申请内存块的大小,后面每一次申请都是前一次的2倍关系,直到maxBlockSize大小,后面的内存块大小则均为maxBlockSize
+ * 正常情况下,不断通过同一个context进行内存分配,很快会达到maxBlockSize阈值
  *
  * Most callers should abstract the context size parameters using a macro
  * such as ALLOCSET_DEFAULT_SIZES.
@@ -389,10 +406,11 @@ AllocSetContextCreateInternal(MemoryContext parent,
 	 * Check whether the parameters match either available freelist.  We do
 	 * not need to demand a match of maxBlockSize.
 	 */
+    // 0 - 8K
 	if (minContextSize == ALLOCSET_DEFAULT_MINSIZE &&
 		initBlockSize == ALLOCSET_DEFAULT_INITSIZE)
 		freeListIndex = 0;
-	else if (minContextSize == ALLOCSET_SMALL_MINSIZE &&
+	else if (minContextSize == ALLOCSET_SMALL_MINSIZE && // 0 - 1K
 			 initBlockSize == ALLOCSET_SMALL_INITSIZE)
 		freeListIndex = 1;
 	else
@@ -430,6 +448,7 @@ AllocSetContextCreateInternal(MemoryContext parent,
 	}
 
 	/* Determine size of initial block */
+    // 如果指定了minContextSize,若context size + block size + chunk size小于minContextSize,则按照minContextSize分配指定空间
 	firstBlockSize = MAXALIGN(sizeof(AllocSetContext)) +
 		ALLOC_BLOCKHDRSZ + ALLOC_CHUNKHDRSZ;
 	if (minContextSize != 0)
@@ -459,6 +478,26 @@ AllocSetContextCreateInternal(MemoryContext parent,
 	 */
 
 	/* Fill in the initial block's block header */
+    /*
+     * Block
+     * block start  -----------------   <--- set
+     *              AllocSetContext
+     *              -----------------
+     *              AllocBlockData
+     *              -----------------   <--- AllocBlockData.freeptr
+     *
+     *
+     *
+     *
+     *  block end   -----------------   <--- AllocBlockData.endptr
+     *
+     * */
+    //         set
+    // Block    [-----------------------------------------]
+    // AllocSet [--------]
+    // block             [------]
+    // freeptr
+    // 内存块开头初始化结构体对象
 	block = KeeperBlock(set);
 	block->aset = set;
 	block->freeptr = ((char *) block) + ALLOC_BLOCKHDRSZ;
@@ -467,6 +506,8 @@ AllocSetContextCreateInternal(MemoryContext parent,
 	block->next = NULL;
 
 	/* Mark unallocated space NOACCESS; leave the block header alone. */
+    // 标记指定内存空间为不可访问状态,其对应的宏为do {} while (0),主要目的是方便进行内存访问调试,可以检测到对未初始化或已经释放的内存的访问避免潜在的内存错误
+    // 该宏动作不会做什么操作,需要确认工具valgrind已安装并且开启了相应的内存调试选项
 	VALGRIND_MAKE_MEM_NOACCESS(block->freeptr, block->endptr - block->freeptr);
 
 	/* Remember block as part of block list */
@@ -504,18 +545,24 @@ AllocSetContextCreateInternal(MemoryContext parent,
 	 * primarily for legacy reasons rather than calculating it so that exactly
 	 * ALLOC_CHUNK_FRACTION chunks fit on a maximally sized block.)
 	 */
+    // 默认8K
 	set->allocChunkLimit = ALLOC_CHUNK_LIMIT;
+    // (maxBlockSize - ALLOC_BLOCKHDRSZ) = block body size = 一个block页除去block header size的剩余空间大小
+    // set->allocChunkLimit + ALLOC_CHUNKHDRSZ表示一个完整的内存片大小
+    // 这里如果一个内存片大小大于 block body size 的1/4,则不断调小chunk size,最终set->allocChunkLimit的值会缩小到maxBlockSize的1/8左右
 	while ((Size) (set->allocChunkLimit + ALLOC_CHUNKHDRSZ) >
 		   (Size) ((maxBlockSize - ALLOC_BLOCKHDRSZ) / ALLOC_CHUNK_FRACTION))
 		set->allocChunkLimit >>= 1;
 
 	/* Finally, do the type-independent part of context creation */
+    // 初始化AllocSetContext的父类MemoryContext内部变量信息,同时如果parent存在，则追加到parent的child链表中
 	MemoryContextCreate((MemoryContext) set,
 						T_AllocSetContext,
 						MCTX_ASET_ID,
 						parent,
 						name);
 
+    // 统计信息，记录allocated size
 	((MemoryContext) set)->mem_allocated = firstBlockSize;
 
 	return (MemoryContext) set;
@@ -715,6 +762,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 	 * If requested size exceeds maximum for chunks, allocate an entire block
 	 * for this request.
 	 */
+    // 目标size > 内存片分配阈值,直接malloc申请新内存块
 	if (size > set->allocChunkLimit)
 	{
 #ifdef MEMORY_CONTEXT_CHECKING
@@ -737,6 +785,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 		chunk = (MemoryChunk *) (((char *) block) + ALLOC_BLOCKHDRSZ);
 
 		/* mark the MemoryChunk as externally managed */
+        // 这里标记该内存块作为外部管理
 		MemoryChunkSetHdrMaskExternal(chunk, MCTX_ASET_ID);
 
 #ifdef MEMORY_CONTEXT_CHECKING
@@ -754,6 +803,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 		 * Stick the new block underneath the active allocation block, if any,
 		 * so that we don't lose the use of the space remaining therein.
 		 */
+        // 这里申请的block追加到AllocSet.blocks.next
 		if (set->blocks != NULL)
 		{
 			block->prev = set->blocks;
@@ -791,6 +841,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 	 * sentinel byte in MEMORY_CONTEXT_CHECKING builds, then we'd end up
 	 * doubling the memory requirements for such allocations.
 	 */
+    // 获取目标大小对应的freelist下标,确认freelist是否存在目标chunk
 	fidx = AllocSetFreeIndex(size);
 	chunk = set->freelist[fidx];
 	if (chunk != NULL)
@@ -831,6 +882,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 	/*
 	 * Choose the actual chunk size to allocate.
 	 */
+    // 获取freelist目标下标保存的chunk大小
 	chunk_size = GetChunkSizeFromFreeListIdx(fidx);
 	Assert(chunk_size >= size);
 
@@ -838,6 +890,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 	 * If there is enough room in the active allocation block, we will put the
 	 * chunk into that block.  Else must start a new one.
 	 */
+    // 确认当前的block是否有足够空间
 	if ((block = set->blocks) != NULL)
 	{
 		Size		availspace = block->endptr - block->freeptr;
@@ -856,6 +909,8 @@ AllocSetAlloc(MemoryContext context, Size size)
 			 * ALLOC_CHUNK_LIMIT left in the block, this loop cannot iterate
 			 * more than ALLOCSET_NUM_FREELISTS-1 times.
 			 */
+            // 当前block中已经没有足够的空间来分配,考虑到申请新的block后不会再从老的block中获取内存,这里则会将当前block中的空闲空间
+            // 按照freelist中的存放规则不断放入对应的slot中,这里会涉及到空间不断分割存放直到有效空间小于8B的内存片
 			while (availspace >= ((1 << ALLOC_MINBITS) + ALLOC_CHUNKHDRSZ))
 			{
 				AllocFreeListLink *link;
@@ -867,6 +922,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 				 * freelist than the one we need to put this chunk on.  The
 				 * exception is when availchunk is exactly a power of 2.
 				 */
+                // 寻找目标slot
 				if (availchunk != GetChunkSizeFromFreeListIdx(a_fidx))
 				{
 					a_fidx--;
@@ -874,6 +930,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 					availchunk = GetChunkSizeFromFreeListIdx(a_fidx);
 				}
 
+                // 初始化内存片
 				chunk = (MemoryChunk *) (block->freeptr);
 
 				/* Prepare to initialize the chunk header. */
@@ -882,11 +939,13 @@ AllocSetAlloc(MemoryContext context, Size size)
 				availspace -= (availchunk + ALLOC_CHUNKHDRSZ);
 
 				/* store the freelist index in the value field */
+                // 在freelist中标记
 				MemoryChunkSetHdrMask(chunk, block, a_fidx, MCTX_ASET_ID);
 #ifdef MEMORY_CONTEXT_CHECKING
 				chunk->requested_size = InvalidAllocSize;	/* mark it free */
 #endif
 				/* push this chunk onto the free list */
+                // 头插
 				link = GetFreeListLink(chunk);
 
 				VALGRIND_MAKE_MEM_DEFINED(link, sizeof(AllocFreeListLink));
@@ -911,7 +970,9 @@ AllocSetAlloc(MemoryContext context, Size size)
 		 * The first such block has size initBlockSize, and we double the
 		 * space in each succeeding block, but not more than maxBlockSize.
 		 */
+        // 获取下一个block大小
 		blksize = set->nextBlockSize;
+        // 这里默认next block size = last block size * 2
 		set->nextBlockSize <<= 1;
 		if (set->nextBlockSize > set->maxBlockSize)
 			set->nextBlockSize = set->maxBlockSize;
@@ -920,6 +981,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 		 * If initBlockSize is less than ALLOC_CHUNK_LIMIT, we could need more
 		 * space... but try to keep it a power of 2.
 		 */
+        // required_size > block size
 		required_size = chunk_size + ALLOC_BLOCKHDRSZ + ALLOC_CHUNKHDRSZ;
 		while (blksize < required_size)
 			blksize <<= 1;
@@ -931,6 +993,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 		 * We could be asking for pretty big blocks here, so cope if malloc
 		 * fails.  But give up if there's less than 1 MB or so available...
 		 */
+        // required_size < block size
 		while (block == NULL && blksize > 1024 * 1024)
 		{
 			blksize >>= 1;
@@ -944,6 +1007,7 @@ AllocSetAlloc(MemoryContext context, Size size)
 
 		context->mem_allocated += blksize;
 
+        // 更新AllocSet的block链表
 		block->aset = set;
 		block->freeptr = ((char *) block) + ALLOC_BLOCKHDRSZ;
 		block->endptr = ((char *) block) + blksize;
@@ -1002,11 +1066,13 @@ void
 AllocSetFree(void *pointer)
 {
 	AllocSet	set;
+    // 获取chunk实际的首地址
 	MemoryChunk *chunk = PointerGetMemoryChunk(pointer);
 
 	/* Allow access to the chunk header. */
 	VALGRIND_MAKE_MEM_DEFINED(chunk, ALLOC_CHUNKHDRSZ);
 
+    // 对于外部的chunk直接释放
 	if (MemoryChunkIsExternal(chunk))
 	{
 		/* Release single-chunk block. */
@@ -1063,6 +1129,7 @@ AllocSetFree(void *pointer)
 
 		fidx = MemoryChunkGetValue(chunk);
 		Assert(FreeListIdxIsValid(fidx));
+        //将chunk转换为AllocFreeListLink,其中通过next指针记录下一块内存片
 		link = GetFreeListLink(chunk);
 
 #ifdef MEMORY_CONTEXT_CHECKING
@@ -1117,6 +1184,7 @@ AllocSetRealloc(void *pointer, Size size)
 	/* Allow access to the chunk header. */
 	VALGRIND_MAKE_MEM_DEFINED(chunk, ALLOC_CHUNKHDRSZ);
 
+    // 外部内存片,realloc
 	if (MemoryChunkIsExternal(chunk))
 	{
 		/*
@@ -1322,6 +1390,7 @@ AllocSetRealloc(void *pointer, Size size)
 		 * wrong freelist for the next initial palloc request, and so we leak
 		 * memory indefinitely.  See pgsql-hackers archives for 2007-08-11.)
 		 */
+        // 申请目标内存片,copy并free old chunk
 		AllocPointer newPointer;
 		Size		oldsize;
 

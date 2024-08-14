@@ -61,6 +61,7 @@ typedef MinimalTupleData *MinimalTuple;
  */
 typedef struct HeapTupleData
 {
+    // len(HeapTupleHeaderData) + len(user_data)
 	uint32		t_len;			/* length of *t_data */
 	ItemPointerData t_self;		/* SelfItemPointer */
 	Oid			t_tableOid;		/* table the tuple came from */

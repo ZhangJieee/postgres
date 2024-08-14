@@ -219,6 +219,7 @@ struct HASHHDR
 struct HTAB
 {
 	HASHHDR    *hctl;			/* => shared control information */
+    //HT中bucket数组
 	HASHSEGMENT *dir;			/* directory of segment starts */
 	HashValueFunc hash;			/* hash function */
 	HashCompareFunc match;		/* key comparison function */
@@ -1607,6 +1608,7 @@ expand_table(HTAB *hashp)
 	old_segnum = old_bucket >> hashp->sshift;
 	old_segndx = MOD(old_bucket, hashp->ssize);
 
+    // 这里分别指向原HTbucket数组和扩容的新bucket数组
 	old_seg = hashp->dir[old_segnum];
 	new_seg = hashp->dir[new_segnum];
 

@@ -69,9 +69,11 @@ typedef struct RelFileLocator
  * are always transient and removed in case of a database crash; they are
  * never WAL-logged or fsync'd.
  */
+// 定位relation物理存储的相关信息
 typedef struct RelFileLocatorBackend
 {
 	RelFileLocator locator;
+    // 访问常规relations,值为InvalidBackendId;反之为后台进程真实ID
 	BackendId	backend;
 } RelFileLocatorBackend;
 

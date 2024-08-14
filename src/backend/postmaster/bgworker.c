@@ -845,6 +845,7 @@ StartBackgroundWorker(void)
 	 */
 	BaseInit();
 
+    // 根据work process ctx 指定的后台任务名称，获取对应的处理动作
 	/*
 	 * Look up the entry point function, loading its library if necessary.
 	 */

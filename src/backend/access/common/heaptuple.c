@@ -212,6 +212,7 @@ heap_compute_data_size(TupleDesc tupleDesc,
 	int			i;
 	int			numberOfAttributes = tupleDesc->natts;
 
+    // 计算所有列大小
 	for (i = 0; i < numberOfAttributes; i++)
 	{
 		Datum		val;
@@ -299,6 +300,7 @@ fill_val(Form_pg_attribute att,
 	 * XXX we use the att_align macros on the pointer value itself, not on an
 	 * offset.  This is a bit of a hack.
 	 */
+    // 整数类型数据
 	if (att->attbyval)
 	{
 		/* pass-by-value */
@@ -306,7 +308,7 @@ fill_val(Form_pg_attribute att,
 		store_att_byval(data, datum, att->attlen);
 		data_length = att->attlen;
 	}
-	else if (att->attlen == -1)
+	else if (att->attlen == -1) // text类型数据
 	{
 		/* varlena */
 		Pointer		val = DatumGetPointer(datum);
@@ -417,6 +419,7 @@ heap_fill_tuple(TupleDesc tupleDesc,
 
 	*infomask &= ~(HEAP_HASNULL | HEAP_HASVARWIDTH | HEAP_HASEXTERNAL);
 
+    //从desc中获取各个列并填充
 	for (i = 0; i < numberOfAttributes; i++)
 	{
 		Form_pg_attribute attr = TupleDescAttr(tupleDesc, i);
@@ -1104,6 +1107,7 @@ heap_copy_tuple_as_datum(HeapTuple tuple, TupleDesc tupleDesc)
  *
  * The result is allocated in the current memory context.
  */
+// 根据values和isnull来构造tuple
 HeapTuple
 heap_form_tuple(TupleDesc tupleDescriptor,
 				Datum *values,
@@ -1139,11 +1143,14 @@ heap_form_tuple(TupleDesc tupleDescriptor,
 	/*
 	 * Determine total space needed
 	 */
-	len = offsetof(HeapTupleHeaderData, t_bits);
+	len = offsetof(HeapTupleHeaderData, t_bits); // = 23
 
+    // 存在空列,预留bitmap空间
 	if (hasnull)
 		len += BITMAPLEN(numberOfAttributes);
 
+    // 这里会进行对齐,无论如何都会存在一个字节的浪费,如果针对8列或以内的表来说,可以直接复用
+    // hoff = len(HeapTupleData) + len(HeapTupleHeaderData)
 	hoff = len = MAXALIGN(len); /* align user data safely */
 
 	data_len = heap_compute_data_size(tupleDescriptor, values, isnull);
@@ -1154,6 +1161,7 @@ heap_form_tuple(TupleDesc tupleDescriptor,
 	 * Allocate and zero the space needed.  Note that the tuple body and
 	 * HeapTupleData management structure are allocated in one chunk.
 	 */
+    // tuple size = len(HeapTupleData) + len(HeapTupleHeaderData) + len(user_data)
 	tuple = (HeapTuple) palloc0(HEAPTUPLESIZE + len);
 	tuple->t_data = td = (HeapTupleHeader) ((char *) tuple + HEAPTUPLESIZE);
 
@@ -1175,6 +1183,7 @@ heap_form_tuple(TupleDesc tupleDescriptor,
 	HeapTupleHeaderSetNatts(td, numberOfAttributes);
 	td->t_hoff = hoff;
 
+    // 填充value
 	heap_fill_tuple(tupleDescriptor,
 					values,
 					isnull,
@@ -1333,6 +1342,7 @@ heap_modify_tuple_by_cols(HeapTuple tuple,
  *		heap_getattr; the loop will become O(N^2) as soon as any
  *		noncacheable attribute offsets are involved.
  */
+// 扫描tuple,将所有的col填充到values和isnull中
 void
 heap_deform_tuple(HeapTuple tuple, TupleDesc tupleDesc,
 				  Datum *values, bool *isnull)
@@ -1356,6 +1366,7 @@ heap_deform_tuple(HeapTuple tuple, TupleDesc tupleDesc,
 	 */
 	natts = Min(natts, tdesc_natts);
 
+    // 指向UserData的首地址
 	tp = (char *) tup + tup->t_hoff;
 
 	off = 0;

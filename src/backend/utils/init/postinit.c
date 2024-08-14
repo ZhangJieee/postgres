@@ -804,7 +804,10 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	 * We must do this before starting a transaction because transaction abort
 	 * would try to touch these hashtables.
 	 */
+    // 初始化RelCache,这里主要是创建了一个HT
 	RelationCacheInitialize();
+
+    // 初始化SysCache
 	InitCatalogCache();
 	InitPlanCache();
 
@@ -818,6 +821,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
 	 * Load relcache entries for the shared system catalogs.  This must create
 	 * at least entries for pg_database and catalogs used for authentication.
 	 */
+    // 针对RelCache的第二次初始化,将必要的系统表(pg_class, pg_attribute, pg_proc, pg_type)和系统表索引的模式信息加入到RelCache中
 	RelationCacheInitializePhase2();
 
 	/*

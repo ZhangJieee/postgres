@@ -1218,7 +1218,7 @@ CreateLockFile(const char *filename, bool amPostmaster,
 		fd = open(filename, O_RDONLY, pg_file_create_mode);
 		if (fd < 0)
 		{
-			if (errno == ENOENT)
+			if (errno == ENOENT) // No such file or directory
 				continue;		/* race condition; try again */
 			ereport(FATAL,
 					(errcode_for_file_access(),

@@ -161,6 +161,9 @@ MemoryChunkSetHdrMask(MemoryChunk *chunk, void *block,
 	Assert(value <= MEMORYCHUNK_MAX_VALUE);
 	Assert((int) methodid <= MEMORY_CONTEXT_METHODID_MASK);
 
+    // 记录当前chunk距离block开始地址的偏移量
+    // chunk size,这里直接记录的是freelist的索引号,对应slot表示的chunk size
+    // memory context method id
 	chunk->hdrmask = (((uint64) blockoffset) << MEMORYCHUNK_BLOCKOFFSET_BASEBIT) |
 		(((uint64) value) << MEMORYCHUNK_VALUE_BASEBIT) |
 		methodid;

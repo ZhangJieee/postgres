@@ -82,6 +82,7 @@
 typedef struct _MdfdVec
 {
 	File		mdfd_vfd;		/* fd number in fd.c's pool */
+    // 大表文件会被切分成多个段,这里则是记录段索引
 	BlockNumber mdfd_segno;		/* segment number, from 0 */
 } MdfdVec;
 
@@ -342,6 +343,7 @@ do_truncate(const char *path)
 	return ret;
 }
 
+// 删除指定的物理文件(do_truncate + unlink)
 static void
 mdunlinkfork(RelFileLocatorBackend rlocator, ForkNumber forknum, bool isRedo)
 {
@@ -552,6 +554,7 @@ mdzeroextend(SMgrRelation reln, ForkNumber forknum,
 
 	while (remblocks > 0)
 	{
+        // next block id
 		BlockNumber segstartblock = curblocknum % ((BlockNumber) RELSEG_SIZE);
 		off_t		seekpos = (off_t) BLCKSZ * segstartblock;
 		int			numblocks;
@@ -577,10 +580,12 @@ mdzeroextend(SMgrRelation reln, ForkNumber forknum,
 		 * that decision should be made though? For now just use a cutoff of
 		 * 8, anything between 4 and 8 worked OK in some local testing.
 		 */
+        // 扩展的block数量 > 8 (8 * 8K = 64K)
 		if (numblocks > 8)
 		{
 			int			ret;
 
+            // 为目标文件预分配空间
 			ret = FileFallocate(v->mdfd_vfd,
 								seekpos, (off_t) BLCKSZ * numblocks,
 								WAIT_EVENT_DATA_FILE_EXTEND);
@@ -604,6 +609,7 @@ mdzeroextend(SMgrRelation reln, ForkNumber forknum,
 			 * to avoid multiple writes or needing a zeroed buffer for the
 			 * whole length of the extension.
 			 */
+            // 填充0
 			ret = FileZero(v->mdfd_vfd,
 						   seekpos, (off_t) BLCKSZ * numblocks,
 						   WAIT_EVENT_DATA_FILE_EXTEND);
@@ -615,6 +621,7 @@ mdzeroextend(SMgrRelation reln, ForkNumber forknum,
 						errhint("Check free disk space."));
 		}
 
+        // fsync刷盘
 		if (!skipFsync && !SmgrIsTemp(reln))
 			register_dirty_segment(reln, forknum, v);
 
@@ -682,6 +689,7 @@ void
 mdopen(SMgrRelation reln)
 {
 	/* mark it not open */
+    // 标记目前没有打开文件
 	for (int forknum = 0; forknum <= MAX_FORKNUM; forknum++)
 		reln->md_num_open_segs[forknum] = 0;
 }
@@ -757,6 +765,7 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 										reln->smgr_rlocator.locator.relNumber,
 										reln->smgr_rlocator.backend);
 
+    // 获取目标block所在的_MdfdVec,即目标fd
 	v = _mdfd_getseg(reln, forknum, blocknum, false,
 					 EXTENSION_FAIL | EXTENSION_CREATE_RECOVERY);
 
@@ -764,6 +773,7 @@ mdread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 
 	Assert(seekpos < (off_t) BLCKSZ * RELSEG_SIZE);
 
+    // 获取目标Page
 	nbytes = FileRead(v->mdfd_vfd, buffer, BLCKSZ, seekpos, WAIT_EVENT_DATA_FILE_READ);
 
 	TRACE_POSTGRESQL_SMGR_MD_READ_DONE(forknum, blocknum,
@@ -970,6 +980,7 @@ mdnblocks(SMgrRelation reln, ForkNumber forknum)
 		if (nblocks < ((BlockNumber) RELSEG_SIZE))
 			return (segno * ((BlockNumber) RELSEG_SIZE)) + nblocks;
 
+        // 最后一个文件已满,这里顺便创建一个新的seg文件
 		/*
 		 * If segment is exactly RELSEG_SIZE, advance to next one.
 		 */
@@ -1165,6 +1176,7 @@ register_dirty_segment(SMgrRelation reln, ForkNumber forknum, MdfdVec *seg)
 	/* Temp relations should never be fsync'd */
 	Assert(!SmgrIsTemp(reln));
 
+    // 注册到sync request queue
 	if (!RegisterSyncRequest(&tag, SYNC_REQUEST, false /* retryOnError */ ))
 	{
 		instr_time	io_start;
@@ -1365,6 +1377,7 @@ _mdfd_openseg(SMgrRelation reln, ForkNumber forknum, BlockNumber segno,
 	 */
 	Assert(segno == reln->md_num_open_segs[forknum]);
 
+    // 扩容md_seg_fds目标分支数组
 	_fdvec_resize(reln, forknum, segno + 1);
 
 	/* fill the entry */
@@ -1386,6 +1399,7 @@ _mdfd_openseg(SMgrRelation reln, ForkNumber forknum, BlockNumber segno,
  * segment, according to "behavior".  Note: skipFsync is only used in the
  * EXTENSION_CREATE case.
  */
+// 寻找目标block所在的seg文件
 static MdfdVec *
 _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 			 bool skipFsync, int behavior)
@@ -1399,9 +1413,11 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 		   (EXTENSION_FAIL | EXTENSION_CREATE | EXTENSION_RETURN_NULL |
 			EXTENSION_DONT_OPEN));
 
+    // blkno块号是全局定义的,所以这里会定位到页所在的目标文件targetseg
 	targetseg = blkno / ((BlockNumber) RELSEG_SIZE);
 
 	/* if an existing and opened segment, we're done */
+    // 确认目标文件是否打开
 	if (targetseg < reln->md_num_open_segs[forknum])
 	{
 		v = &reln->md_seg_fds[forknum][targetseg];
@@ -1420,17 +1436,21 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 	 * none was opened before.
 	 */
 	if (reln->md_num_open_segs[forknum] > 0)
+        // 获取目标分支打开的最后一个文件
 		v = &reln->md_seg_fds[forknum][reln->md_num_open_segs[forknum] - 1];
 	else
 	{
+        // 当前分支没有已打开的文件，这里打开第一个seg文件
 		v = mdopenfork(reln, forknum, behavior);
 		if (!v)
 			return NULL;		/* if behavior & EXTENSION_RETURN_NULL */
 	}
 
+    // 从当前已打开的块到targetseg之间的所有seg,依次打开
 	for (nextsegno = reln->md_num_open_segs[forknum];
 		 nextsegno <= targetseg; nextsegno++)
 	{
+        // 获取目标seg文件中总的页个数
 		BlockNumber nblocks = _mdnblocks(reln, forknum, v);
 		int			flags = 0;
 
@@ -1461,6 +1481,7 @@ _mdfd_getseg(SMgrRelation reln, ForkNumber forknum, BlockNumber blkno,
 				char	   *zerobuf = palloc_aligned(BLCKSZ, PG_IO_ALIGN_SIZE,
 													 MCXT_ALLOC_ZERO);
 
+                // 为Relation的目标分支分配一个新的页
 				mdextend(reln, forknum,
 						 nextsegno * ((BlockNumber) RELSEG_SIZE) - 1,
 						 zerobuf, skipFsync);

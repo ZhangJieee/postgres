@@ -325,12 +325,14 @@ static bool doPageWrites;
  *----------
  */
 
+// 记录需要write out和flush的byte position
 typedef struct XLogwrtRqst
 {
 	XLogRecPtr	Write;			/* last byte + 1 to write out */
 	XLogRecPtr	Flush;			/* last byte + 1 to flush */
 } XLogwrtRqst;
 
+// 记录已经write out和flush的byte position
 typedef struct XLogwrtResult
 {
 	XLogRecPtr	Write;			/* last byte + 1 written out */
@@ -1434,6 +1436,7 @@ WALInsertLockUpdateInsertingAt(XLogRecPtr insertingAt)
  * uninitialized page), and the inserter might need to evict an old WAL buffer
  * to make room for a new one, which in turn requires WALWriteLock.
  */
+// 这里等待WAL中upto之前的日志信息flush完成
 static XLogRecPtr
 WaitXLogInsertionsToFinish(XLogRecPtr upto)
 {
@@ -2538,6 +2541,7 @@ XLogFlush(XLogRecPtr record)
 	XLogwrtRqst WriteRqst;
 	TimeLineID	insertTLI = XLogCtl->InsertTimeLineID;
 
+    // Recovery期间,更新minRecoveryPoint代替flush
 	/*
 	 * During REDO, we are reading not writing WAL.  Therefore, instead of
 	 * trying to flush the WAL, we should update minRecoveryPoint instead. We
@@ -2584,6 +2588,7 @@ XLogFlush(XLogRecPtr record)
 	{
 		XLogRecPtr	insertpos;
 
+        // 这里获取XLog中需要flush的byte position
 		/* read LogwrtResult and update local state */
 		SpinLockAcquire(&XLogCtl->info_lck);
 		if (WriteRqstPtr < XLogCtl->LogwrtRqst.Write)
@@ -2854,6 +2859,7 @@ XLogBackgroundFlush(void)
 	return true;
 }
 
+// 这里确认目标record(Page Header中的pd_lsn)是否需要flush
 /*
  * Test whether XLOG data has been flushed up to (at least) the given position.
  *
@@ -2863,6 +2869,7 @@ XLogBackgroundFlush(void)
 bool
 XLogNeedsFlush(XLogRecPtr record)
 {
+    // db recovery期间,这里会通过更新minRecoveryPoint来代替flush wal
 	/*
 	 * During recovery, we don't flush WAL but update minRecoveryPoint
 	 * instead. So "needs flush" is taken to mean whether minRecoveryPoint
@@ -2910,10 +2917,12 @@ XLogNeedsFlush(XLogRecPtr record)
 			return true;
 	}
 
+    // 对比当前记录的已经FLUSH的byte position(lsn)
 	/* Quick exit if already known flushed */
 	if (record <= LogwrtResult.Flush)
 		return false;
 
+    // 读取全局的XLog状态并同步到本地变量
 	/* read LogwrtResult and update local state */
 	SpinLockAcquire(&XLogCtl->info_lck);
 	LogwrtResult = XLogCtl->LogwrtResult;
@@ -3123,6 +3132,7 @@ XLogFileInit(XLogSegNo logsegno, TimeLineID logtli)
 		return fd;
 
 	/* Now open original target segment (might not be file I just made) */
+    // sync_method = SYNC_METHOD_FDATASYNC(1)
 	fd = BasicOpenFile(path, O_RDWR | PG_BINARY | O_CLOEXEC |
 					   get_sync_bit(sync_method));
 	if (fd < 0)
@@ -8182,6 +8192,7 @@ assign_xlog_sync_method(int new_sync_method, void *extra)
  * 'fd' is a file descriptor for the XLOG file to be fsync'd.
  * 'segno' is for error reporting purposes.
  */
+// 触发一次同步刷盘
 void
 issue_xlog_fsync(int fd, XLogSegNo segno, TimeLineID tli)
 {

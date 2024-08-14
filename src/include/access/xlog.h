@@ -20,7 +20,7 @@
 
 /* Sync methods */
 #define SYNC_METHOD_FSYNC		0
-#define SYNC_METHOD_FDATASYNC	1
+#define SYNC_METHOD_FDATASYNC	1   /* default in linux */
 #define SYNC_METHOD_OPEN		2	/* for O_SYNC */
 #define SYNC_METHOD_FSYNC_WRITETHROUGH	3
 #define SYNC_METHOD_OPEN_DSYNC	4	/* for O_DSYNC */

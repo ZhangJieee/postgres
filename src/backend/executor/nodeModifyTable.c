@@ -782,6 +782,7 @@ ExecInsert(ModifyTableContext *context,
 		resultRelInfo = partRelInfo;
 	}
 
+    // 物化tuple slot
 	ExecMaterializeSlot(slot);
 
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
@@ -1130,11 +1131,13 @@ ExecInsert(ModifyTableContext *context,
 		else
 		{
 			/* insert the tuple normally */
+            // 插入新tuple
 			table_tuple_insert(resultRelationDesc, slot,
 							   estate->es_output_cid,
 							   0, NULL);
 
 			/* insert index entries for tuple */
+            // 如果tuple存在索引项,更新索引
 			if (resultRelInfo->ri_NumIndices > 0)
 				recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 													   slot, estate, false,

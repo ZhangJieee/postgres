@@ -353,6 +353,7 @@ standard_ExecutorRun(QueryDesc *queryDesc,
 	if (sendTuples)
 		dest->rStartup(dest, operation, queryDesc->tupDesc);
 
+    // 执行器开始执行
 	/*
 	 * run plan
 	 */
@@ -1609,6 +1610,7 @@ ExecCloseRangeTableRelations(EState *estate)
 	}
 }
 
+// 这里是实际执行的入口
 /* ----------------------------------------------------------------
  *		ExecutePlan
  *
@@ -1653,6 +1655,7 @@ ExecutePlan(EState *estate,
 		use_parallel_mode = false;
 
 	estate->es_use_parallel_mode = use_parallel_mode;
+    // 标记进入并行模式
 	if (use_parallel_mode)
 		EnterParallelMode();
 
@@ -1664,6 +1667,7 @@ ExecutePlan(EState *estate,
 		/* Reset the per-output-tuple exprcontext */
 		ResetPerTupleExprContext(estate);
 
+        // 执行plan node的执行动作
 		/*
 		 * Execute the plan and obtain a tuple
 		 */

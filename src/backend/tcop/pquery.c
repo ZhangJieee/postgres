@@ -511,6 +511,7 @@ PortalStart(Portal portal, ParamListInfo params,
 				else
 					myeflags = eflags;
 
+                // 准备查询计划的执行器
 				/*
 				 * Call ExecutorStart to prepare the plan for execution
 				 */

@@ -92,6 +92,8 @@ heap_toast_delete(Relation rel, HeapTuple oldtup, bool is_speculative)
  * from the pre-8.1 API of this routine.
  * ----------
  */
+// 根据旧tuple是否为空来确定当前进行的是插入或更新操作
+// 同时会将新tuple进行TOAST处理,并返回处理结果
 HeapTuple
 heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 							int options)
@@ -129,9 +131,11 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	 * Get the tuple descriptor and break down the tuple(s) into fields.
 	 */
 	tupleDesc = rel->rd_att;
+    // 单个tuple中的col个数
 	numAttrs = tupleDesc->natts;
 
 	Assert(numAttrs <= MaxHeapAttributeNumber);
+    // 将tuple中所有col数据提取到values和isnull中
 	heap_deform_tuple(newtup, tupleDesc, toast_values, toast_isnull);
 	if (oldtup != NULL)
 		heap_deform_tuple(oldtup, tupleDesc, toast_oldvalues, toast_oldisnull);
@@ -174,18 +178,24 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		hoff += BITMAPLEN(numAttrs);
 	hoff = MAXALIGN(hoff);
 	/* now convert to a limit on the tuple data size */
+    // TOAST属性的col本地可以存放的最大可用空间
 	maxDataLen = RelationGetToastTupleTarget(rel, TOAST_TUPLE_TARGET) - hoff;
 
+    // 下面对TOAST属性的col进行压缩或线外存储来保证tuple控制在maxDataLen以内
 	/*
 	 * Look for attributes with attstorage EXTENDED to compress.  Also find
 	 * large attributes with attstorage EXTENDED or EXTERNAL, and store them
 	 * external.
 	 */
+    // 针对EXTENDED属性的col进行压缩
+    // 针对EXTENDED||EXTERNAL的大col(即超过maxDataLen限制的TOAST col)进行线外存储
 	while (heap_compute_data_size(tupleDesc,
 								  toast_values, toast_isnull) > maxDataLen)
 	{
 		int			biggest_attno;
 
+        // 这里寻找尺寸最大且没有经过TOAST处理的col
+        // 第二个参数true表示跳过标记TOASTCOL_INCOMPRESSIBLE的TOAST col
 		biggest_attno = toast_tuple_find_biggest_attribute(&ttc, true, false);
 		if (biggest_attno < 0)
 			break;
@@ -193,10 +203,12 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		/*
 		 * Attempt to compress it inline, if it has attstorage EXTENDED
 		 */
+        // 判断目标列对应的TOAST属性存储策略,TYPSTORAGE_EXTENDED = 压缩+线外
 		if (TupleDescAttr(tupleDesc, biggest_attno)->attstorage == TYPSTORAGE_EXTENDED)
 			toast_tuple_try_compression(&ttc, biggest_attno);
 		else
 		{
+            // EXTERNAL,标记忽略压缩
 			/*
 			 * has attstorage EXTERNAL, ignore on subsequent compression
 			 * passes
@@ -212,11 +224,13 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		 *
 		 * XXX maybe the threshold should be less than maxDataLen?
 		 */
+        // col仍然大于限制,则线外存储
 		if (toast_attr[biggest_attno].tai_size > maxDataLen &&
 			rel->rd_rel->reltoastrelid != InvalidOid)
 			toast_tuple_externalize(&ttc, biggest_attno, options);
 	}
 
+    // 如果大小仍不能满足,这里则针对可以进行线外存储的col进行转移到TOAST表
 	/*
 	 * Second we look for attributes of attstorage EXTENDED or EXTERNAL that
 	 * are still inline, and make them external.  But skip this if there's no
@@ -234,6 +248,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		toast_tuple_externalize(&ttc, biggest_attno, options);
 	}
 
+    // 如果大小仍不能满足,这里针对MAIN类型的TOAST col进行压缩
 	/*
 	 * Round 3 - this time we take attributes with storage MAIN into
 	 * compression
@@ -243,6 +258,8 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 	{
 		int			biggest_attno;
 
+        // 第二个参数true表示跳过带有标记的TOASTCOL_INCOMPRESSIBLE
+        // 第三个参数true表示TOAST类型为MAIN的col
 		biggest_attno = toast_tuple_find_biggest_attribute(&ttc, true, true);
 		if (biggest_attno < 0)
 			break;
@@ -250,6 +267,7 @@ heap_toast_insert_or_update(Relation rel, HeapTuple newtup, HeapTuple oldtup,
 		toast_tuple_try_compression(&ttc, biggest_attno);
 	}
 
+    // 如果大小仍不能满足,最后将MAIN类型的TOAST col进行转移到线外存储
 	/*
 	 * Finally we store attributes of type MAIN externally.  At this point we
 	 * increase the target tuple size, so that MAIN attributes aren't stored

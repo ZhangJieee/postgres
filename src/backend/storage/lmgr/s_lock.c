@@ -132,6 +132,7 @@ perform_spin_delay(SpinDelayStatus *status)
 	if (++(status->spins) >= spins_per_delay)
 	{
 		if (++(status->delays) > NUM_DELAYS)
+            // 如果满足这个条件,则认为在使用spin lock的地方发生死锁,或者等待了很久的时间
 			s_lock_stuck(status->file, status->line, status->func);
 
 		if (status->cur_delay == 0) /* first time to delay? */
@@ -155,6 +156,7 @@ perform_spin_delay(SpinDelayStatus *status)
 #endif
 
 		/* increase delay by a random fraction between 1X and 2X */
+        // pg_prng_double随机从[0.0, 1.0]区间中选择一个浮点数
 		status->cur_delay += (int) (status->cur_delay *
 									pg_prng_double(&pg_global_prng_state) + 0.5);
 		/* wrap back to minimum delay when max is exceeded */
@@ -182,17 +184,20 @@ perform_spin_delay(SpinDelayStatus *status)
  * backend might not live long enough to converge on a good value.  That
  * is handled by the two routines below.
  */
+// 每次使用完spin lock,会进行动态调参来决定后面执行loop的次数
 void
 finish_spin_delay(SpinDelayStatus *status)
 {
 	if (status->cur_delay == 0)
 	{
+        // status->cur_delay为0表示在spins_per_delay次loop内即可获取到资源,避免出现不必要的sleep,这里调大loop的次数
 		/* we never had to delay */
 		if (spins_per_delay < MAX_SPINS_PER_DELAY)
 			spins_per_delay = Min(spins_per_delay + 100, MAX_SPINS_PER_DELAY);
 	}
 	else
 	{
+        // status->cur_delay不为0表示经过spins_per_delay次loop后仍未获取到资源,避免过多的loop,这里调小loop的次数
 		if (spins_per_delay > MIN_SPINS_PER_DELAY)
 			spins_per_delay = Max(spins_per_delay - 1, MIN_SPINS_PER_DELAY);
 	}

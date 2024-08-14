@@ -646,6 +646,8 @@ PostmasterMain(int argc, char *argv[])
 	pqsignal(SIGTERM, handle_pm_shutdown_request_signal);
 	pqsignal(SIGALRM, SIG_IGN); /* ignored */
 	pqsignal(SIGPIPE, SIG_IGN); /* ignored */
+
+    // 注册SIGUSR1信号回调,目前理解使用场景是在需要计划并行的时候,通过该信息通知postmaster创建work process
 	pqsignal(SIGUSR1, handle_pm_pmsignal_signal);
 	pqsignal(SIGUSR2, dummy_handler);	/* unused, reserve for children */
 	pqsignal(SIGCHLD, handle_pm_child_exit_signal);
@@ -999,6 +1001,7 @@ PostmasterMain(int argc, char *argv[])
 	 * Register the apply launcher.  It's probably a good idea to call this
 	 * before any modules had a chance to take the background worker slots.
 	 */
+    // Register logical replication launcher
 	ApplyLauncherRegister();
 
 	/*
@@ -1145,6 +1148,7 @@ PostmasterMain(int argc, char *argv[])
 	/*
 	 * If enabled, start up syslogger collection subprocess
 	 */
+    // 创建syslogger子进程
 	SysLoggerPID = SysLogger_Start();
 
 	/*
@@ -1447,6 +1451,7 @@ PostmasterMain(int argc, char *argv[])
 	AddToDataDirLockFile(LOCK_FILE_LINE_PM_STATUS, PM_STATUS_STARTING);
 
 	/* Start bgwriter and checkpointer so they can help with recovery */
+    // 启动checkpointer和bg writer
 	if (CheckpointerPID == 0)
 		CheckpointerPID = StartCheckpointer();
 	if (BgWriterPID == 0)
@@ -1463,6 +1468,7 @@ PostmasterMain(int argc, char *argv[])
 	/* Some workers may be scheduled to start now */
 	maybe_start_bgworkers();
 
+    // Main Thread Loop
 	status = ServerLoop();
 
 	/*
@@ -1602,6 +1608,7 @@ checkControlFile(void)
  * arriving.  However, if there are background workers waiting to be started,
  * we don't actually sleep so that they are quickly serviced.  Other exception
  * cases are as shown in the code.
+ * 通常情况下event_loop的timeout <= 1min,如果存在后台服务未开始,则sleep=0
  */
 static int
 DetermineSleepTime(void)
@@ -1726,6 +1733,7 @@ ServerLoop(void)
 	{
 		time_t		now;
 
+        // 等待就绪事件
 		nevents = WaitEventSetWait(pm_wait_set,
 								   DetermineSleepTime(),
 								   events,
@@ -1757,6 +1765,7 @@ ServerLoop(void)
 			if (pending_pm_pmsignal)
 				process_pm_pmsignal();
 
+            // 这里1个新连接绑定1个子进程
 			if (events[i].events & WL_SOCKET_ACCEPT)
 			{
 				Port	   *port;
@@ -2653,6 +2662,7 @@ handle_pm_pmsignal_signal(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
 
+    //这里信号回调只更新了flag,主要的处理在server_loop中
 	pending_pm_pmsignal = true;
 	SetLatch(MyLatch);
 
@@ -5101,6 +5111,7 @@ process_pm_pmsignal(void)
 		StartWorkerNeeded = true;
 	}
 
+    // 这里处理创建work process相关的事件
 	/* Process background worker state changes. */
 	if (CheckPostmasterSignal(PMSIGNAL_BACKGROUND_WORKER_CHANGE))
 	{
@@ -5109,6 +5120,7 @@ process_pm_pmsignal(void)
 		StartWorkerNeeded = true;
 	}
 
+    // 实际创建动作
 	if (StartWorkerNeeded || HaveCrashedWorker)
 		maybe_start_bgworkers();
 

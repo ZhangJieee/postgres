@@ -3447,6 +3447,7 @@ ExecParallelHashPushTuple(dsa_pointer_atomic *head,
 						  HashJoinTuple tuple,
 						  dsa_pointer tuple_shared)
 {
+    // 原子性的头插
 	for (;;)
 	{
 		tuple->next.shared = dsa_pointer_atomic_read(head);

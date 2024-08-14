@@ -131,6 +131,7 @@ typedef struct relidcacheent
 	Relation	reldesc;
 } RelIdCacheEnt;
 
+// RelCache,单个PG进程中缓存最近访问的表模式信息,以HT作为索引,OID为key,RelIdCacheEnt为value
 static HTAB *RelationIdCache;
 
 /*
@@ -2100,6 +2101,7 @@ RelationIdGetRelation(Oid relationId)
 		return rd;
 	}
 
+    // 没有查找到目标表在HT中,构建新的Relation并写入HT
 	/*
 	 * no reldesc in the cache, so have RelationBuildDesc() build one and add
 	 * it.
@@ -3940,12 +3942,14 @@ RelationCacheInitialize(void)
 	/*
 	 * make sure cache memory context exists
 	 */
+    // 创建CacheMemoryContext
 	if (!CacheMemoryContext)
 		CreateCacheMemoryContext();
 
 	/*
 	 * create hashtable that indexes the relcache
 	 */
+    // 创建HT,这里HT key = 表OID, value = RelIdCacheEnt
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(RelIdCacheEnt);
 	RelationIdCache = hash_create("Relcache by OID", INITRELCACHESIZE,

@@ -138,6 +138,7 @@ ExecInitGather(Gather *node, EState *estate, int eflags)
  *		the next qualifying tuple.
  * ----------------------------------------------------------------
  */
+// 并行扫描中的leader process
 static TupleTableSlot *
 ExecGather(PlanState *pstate)
 {
@@ -166,6 +167,7 @@ ExecGather(PlanState *pstate)
 		{
 			ParallelContext *pcxt;
 
+            // 生成 work process 的计划
 			/* Initialize, or re-initialize, shared state needed by workers. */
 			if (!node->pei)
 				node->pei = ExecInitParallelPlan(outerPlanState(node),
@@ -183,6 +185,8 @@ ExecGather(PlanState *pstate)
 			 * requested, or indeed any at all.
 			 */
 			pcxt = node->pei->pcxt;
+
+            // 创建 work process
 			LaunchParallelWorkers(pcxt);
 			/* We save # workers launched for the benefit of EXPLAIN */
 			node->nworkers_launched = pcxt->nworkers_launched;
@@ -190,6 +194,7 @@ ExecGather(PlanState *pstate)
 			/* Set up tuple queue readers to read the results. */
 			if (pcxt->nworkers_launched > 0)
 			{
+                // 根据并行work process设置并行reader,用来读取处理结果
 				ExecParallelCreateReaders(node->pei);
 				/* Make a working array showing the active readers */
 				node->nreaders = pcxt->nworkers_launched;
@@ -224,6 +229,7 @@ ExecGather(PlanState *pstate)
 	 * Get next tuple, either from one of our workers, or by running the plan
 	 * ourselves.
 	 */
+    // 获取下一个元组
 	slot = gather_getnext(node);
 	if (TupIsNull(slot))
 		return NULL;
@@ -271,6 +277,7 @@ gather_getnext(GatherState *gatherstate)
 
 		if (gatherstate->nreaders > 0)
 		{
+            // 从某个Reader获取一个元组
 			tup = gather_readnext(gatherstate);
 
 			if (HeapTupleIsValid(tup))
@@ -328,13 +335,16 @@ gather_readnext(GatherState *gatherstate)
 		 * when we get there.
 		 */
 		Assert(gatherstate->nextreader < gatherstate->nreaders);
+        // 轮询所有的Reader,一个读完读下一个
 		reader = gatherstate->reader[gatherstate->nextreader];
+        // 从目标reader获取一个tuple
 		tup = TupleQueueReaderNext(reader, true, &readerdone);
 
 		/*
 		 * If this reader is done, remove it from our working array of active
 		 * readers.  If all readers are done, we're outta here.
 		 */
+        // 如果reader queue被detach,则移除当前reader,当所有的reader done后,需要关闭work process
 		if (readerdone)
 		{
 			Assert(!tup);
@@ -364,6 +374,7 @@ gather_readnext(GatherState *gatherstate)
 		 * every tuple, but it turns out to be much more efficient to keep
 		 * reading from the same queue until that would require blocking.
 		 */
+        //
 		gatherstate->nextreader++;
 		if (gatherstate->nextreader >= gatherstate->nreaders)
 			gatherstate->nextreader = 0;

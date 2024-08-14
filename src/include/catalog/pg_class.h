@@ -69,6 +69,7 @@ CATALOG(pg_class,1259,RelationRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(83,Relat
 	int32		relallvisible BKI_DEFAULT(0);
 
 	/* OID of toast table; 0 if none */
+    // 记录该表关联的TOAST表OID
 	Oid			reltoastrelid BKI_DEFAULT(0) BKI_LOOKUP_OPT(pg_class);
 
 	/* T if has (or has had) any indexes */
